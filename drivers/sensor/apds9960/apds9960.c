@@ -49,6 +49,7 @@ static void apds9960_gpio_callback(const struct device *dev,
 static int apds9960_sample_fetch(const struct device *dev,
 				 enum sensor_channel chan)
 {
+	// LOG_INF("-----APDS9960-----Fetching Sample");
 	const struct apds9960_config *config = dev->config;
 	struct apds9960_data *data = dev->data;
 	uint8_t tmp;
@@ -59,6 +60,7 @@ static int apds9960_sample_fetch(const struct device *dev,
 	}
 
 #ifndef CONFIG_APDS9960_TRIGGER
+	// LOG_INF("-----APDS9960-----Fetching Sample/Setting up interrupts for some reason");
 	apds9960_setup_int(config, true);
 
 #ifdef CONFIG_APDS9960_ENABLE_ALS
@@ -66,6 +68,7 @@ static int apds9960_sample_fetch(const struct device *dev,
 #else
 	tmp = APDS9960_ENABLE_PON | APDS9960_ENABLE_PIEN;
 #endif
+	// LOG_INF("-----APDS9960-----Fetching Sample/Resetting power on bit for some reason");
 	if (i2c_reg_update_byte_dt(&config->i2c,
 				APDS9960_ENABLE_REG, tmp, tmp)) {
 		LOG_ERR("Power on bit not set.");
@@ -98,19 +101,21 @@ static int apds9960_sample_fetch(const struct device *dev,
 
 	}
 
-#ifndef CONFIG_APDS9960_TRIGGER
-	if (i2c_reg_update_byte_dt(&config->i2c,
-				APDS9960_ENABLE_REG,
-				APDS9960_ENABLE_PON,
-				0)) {
-		return -EIO;
-	}
-#endif
+// #ifndef CONFIG_APDS9960_TRIGGER
+// 	if (i2c_reg_update_byte_dt(&config->i2c,
+// 				APDS9960_ENABLE_REG,
+// 				APDS9960_ENABLE_PON,
+// 				0)) {
+// 		return -EIO;
+// 	}
+// #endif
 
 	if (i2c_reg_write_byte_dt(&config->i2c,
 			       APDS9960_AICLEAR_REG, 0)) {
 		return -EIO;
 	}
+
+	k_sem_give(&data->data_sem);
 
 	return 0;
 }
@@ -119,6 +124,7 @@ static int apds9960_channel_get(const struct device *dev,
 				enum sensor_channel chan,
 				struct sensor_value *val)
 {
+	// LOG_INF("-----APDS9960-----Getting Channel");
 	struct apds9960_data *data = dev->data;
 
 	switch (chan) {
@@ -224,6 +230,7 @@ static int apds9960_proxy_setup(const struct device *dev)
 #ifdef CONFIG_APDS9960_ENABLE_ALS
 static int apds9960_ambient_setup(const struct device *dev)
 {
+	// LOG_INF("Setting up APDS9960 --- ALS.");
 	const struct apds9960_config *config = dev->config;
 	uint16_t th;
 
@@ -273,6 +280,7 @@ static int apds9960_ambient_setup(const struct device *dev)
 
 static int apds9960_sensor_setup(const struct device *dev)
 {
+	// LOG_INF("Setting up APDS9960.");
 	const struct apds9960_config *config = dev->config;
 	uint8_t chip_id;
 

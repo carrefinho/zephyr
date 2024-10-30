@@ -1,0 +1,16 @@
+&arduino_i2c {
+   status = "okay";
+
+   apds9960: apds9960@39 {
+       compatible = "avago,apds9960";
+       status = "okay";
+       reg = <0x39>;
+       int-gpios = <&gpio0 02 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+   };
+
+   // tsl2591: tsl2591@29 {
+   //     compatible = "ams,tsl2591";
+   //     status = "okay";
+   //     reg = <0x29>;
+   // };
+};
