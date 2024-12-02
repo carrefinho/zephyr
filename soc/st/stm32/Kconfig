@@ -36,6 +36,21 @@ config HAS_STM32_FLASH_PREFETCH
 	help
 	  Hidden symbol selected by SoCs which support flash prefetch.
 
+config STM32_BOOTLOADER
+	bool "STM32 Bootloader Support"
+	default y
+	depends on RETENTION_BOOT_MODE && DT_HAS_ST_STM32_BOOTLOADER_ENABLED
+	help
+	  Enable support for jumping into the STM32 bootloader when the
+	  bootmode is set.
+
+config STM32_BOOTLOADER_INIT_PRIORITY
+	int "STM32 bootloader check init priority"
+	default 3
+	help
+	  STM32 bootloader check initialization priority (must be higher than init
+	  priorities for retention/retained memory drivers).
+
 # This option is consumed by `soc.c` of applicable series
 config STM32_FLASH_PREFETCH
 	bool "Flash prefetch buffer"
