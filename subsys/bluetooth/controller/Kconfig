@@ -131,6 +131,9 @@ config BT_CTLR_CHANNEL_SOUNDING_SUPPORT
 config BT_CTLR_EXTENDED_FEAT_SET_SUPPORT
 	bool
 
+config BT_CTLR_SHORTER_CONNECTION_INTERVALS_SUPPORT
+	bool
+
 # Virtual option that all local LL implementations should select
 config HAS_BT_CTLR
 	bool
@@ -1171,6 +1174,17 @@ config BT_CTLR_LOCAL_FEATURE_PAGE
 	  controller stores per connection for the peer's extended features.
 	  Default 1 is enough for the current >=64 feature bits; raise only if a
 	  higher page is needed.
+
+config BT_CTLR_SHORTER_CONNECTION_INTERVALS
+	bool "Shorter Connection Intervals"
+	depends on BT_CTLR_SHORTER_CONNECTION_INTERVALS_SUPPORT
+	depends on BT_CTLR_EXTENDED_FEAT_SET
+	depends on BT_CTLR_SUBRATING
+	select BT_CTLR_SET_HOST_FEATURE
+	default y if BT_SHORTER_CONNECTION_INTERVALS
+	help
+	  Enable support for Bluetooth 6.2 Shorter Connection Intervals
+	  in the controller.
 
 rsource "Kconfig.df"
 rsource "Kconfig.ll_sw_split"
