@@ -1965,12 +1965,14 @@ void notify_remote_info(struct bt_conn *conn)
 
 void notify_le_param_updated(struct bt_conn *conn)
 {
+	uint16_t interval_1250us = conn->le.interval_us / BT_HCI_LE_INTERVAL_UNIT_US;
+
 	/* If new connection parameters meet requirement of pending
 	 * parameters don't send peripheral conn param request anymore on timeout
 	 */
 	if (atomic_test_bit(conn->flags, BT_CONN_PERIPHERAL_PARAM_SET) &&
-	    conn->le.interval >= conn->le.interval_min &&
-	    conn->le.interval <= conn->le.interval_max &&
+	    interval_1250us >= conn->le.interval_min &&
+	    interval_1250us <= conn->le.interval_max &&
 	    conn->le.latency == conn->le.pending_latency &&
 	    conn->le.timeout == conn->le.pending_timeout) {
 		atomic_clear_bit(conn->flags, BT_CONN_PERIPHERAL_PARAM_SET);
@@ -1980,7 +1982,7 @@ void notify_le_param_updated(struct bt_conn *conn)
 
 	SYS_SLIST_FOR_EACH_CONTAINER(&conn_cbs, callback, _node) {
 		if (callback->le_param_updated) {
-			callback->le_param_updated(conn, conn->le.interval,
+			callback->le_param_updated(conn, interval_1250us,
 						   conn->le.latency,
 						   conn->le.timeout);
 		}
@@ -1988,9 +1990,8 @@ void notify_le_param_updated(struct bt_conn *conn)
 
 	STRUCT_SECTION_FOREACH(bt_conn_cb, cb) {
 		if (cb->le_param_updated) {
-			cb->le_param_updated(conn, conn->le.interval,
-					     conn->le.latency,
-					     conn->le.timeout);
+			cb->le_param_updated(conn, interval_1250us,
+					     conn->le.latency, conn->le.timeout);
 		}
 	}
 }
@@ -2953,7 +2954,7 @@ int bt_conn_get_info(const struct bt_conn *conn, struct bt_conn_info *info)
 		}
 		info->le.interval_us = conn->le.interval_us;
 #if !defined(CONFIG_BT_SHORTER_CONNECTION_INTERVALS)
-		info->le.interval = conn->le.interval_us / BT_HCI_LE_INTERVAL_UNIT_US;
+		info->le._interval = conn->le.interval_us / BT_HCI_LE_INTERVAL_UNIT_US;
 #endif
 		info->le.latency = conn->le.latency;
 		info->le.timeout = conn->le.timeout;
