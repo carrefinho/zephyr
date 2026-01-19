@@ -1,0 +1,102 @@
+# Copyright (c) 2025 MASSDRIVER EI (massdriver.space)
+# SPDX-License-Identifier: Apache-2.0
+
+title: Solomon SSD1362 display controller
+
+description: |
+    The Solomon SSD1362 is a grayscale OLED controller
+    with 256x64 resolution and 16 gray levels.
+
+compatible: "solomon,ssd1362"
+
+include: [mipi-dbi-spi-device.yaml, display-controller.yaml]
+
+properties:
+  column-offset:
+    type: int
+    default: 0
+    description: First visible column number.
+
+  row-offset:
+    type: int
+    default: 0
+    description: |
+      COM pin used as first row, mapped to the line set by start-line.
+      The default corresponds to the reset value of the register.
+
+  start-line:
+    type: int
+    default: 0
+    description: |
+      Starting line address of display RAM (0-63).
+      The default corresponds to the reset value of the register.
+
+  mux-ratio:
+    type: int
+    default: 64
+    description: COM Pin Multiplex ratio from 16 to 64. Typically height.
+
+  oscillator-freq:
+    type: int
+    required: true
+    description: |
+      Front clock divider (3:0) / oscillator frequency (7:4).
+      A good starting value for SSD1362 is 0xA0.
+
+  precharge-voltage:
+    type: int
+    required: true
+    description: |
+      Set precharge voltage, from 0 (0.2 x VCC) to 0x1F (0.51 x VCC).
+      A good starting value is 0x1F.
+
+  vcomh-voltage:
+    type: int
+    required: true
+    description: |
+      Set COM deselect voltage, from 0 to 0x7 (0.86 x VCC).
+      A good starting value is 0x07.
+
+  phase-length:
+    type: int
+    required: true
+    description: |
+      Phase Length for segment charging (7:4) and discharging (3:0).
+      A good starting value for SSD1362 is 0x22.
+
+  second-precharge-period:
+    type: int
+    default: 4
+    description: Second precharge period, from 0 (0 dclk) to 0xF (15 dclks).
+
+  remap-row-first:
+    type: boolean
+    description: Set scan direction to vertical first (swap rows/columns).
+
+  remap-columns:
+    type: boolean
+    description: Reverse the column order (flip horizontally).
+
+  remap-rows:
+    type: boolean
+    description: Reverse the row order (flip vertically).
+
+  remap-nibble:
+    type: boolean
+    description: Reverse nibble order within each byte.
+
+  remap-com-odd-even-split:
+    type: boolean
+    description: Odd even split of COM pins.
+
+  remap-com-dual:
+    type: boolean
+    description: SEG left/right remap.
+
+  inversion-on:
+    type: boolean
+    description: Turn on display color inverting.
+
+  iref-external:
+    type: boolean
+    description: Use external IREF current reference instead of internal.

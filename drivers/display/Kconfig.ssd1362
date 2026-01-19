@@ -1,0 +1,29 @@
+# Copyright (c) 2025 MASSDRIVER EI (massdriver.space)
+# SPDX-License-Identifier: Apache-2.0
+
+config SSD1362
+	bool "SSD1362 display driver"
+	default y
+	depends on DT_HAS_SOLOMON_SSD1362_ENABLED
+	select MIPI_DBI
+	help
+	  Enable driver for SSD1362 display driver.
+
+if SSD1362
+
+config SSD1362_DEFAULT_CONTRAST
+	int "SSD1362 default contrast"
+	default 159
+	range 0 255
+	help
+	  SSD1362 default contrast setting (0x9F = 159).
+
+config SSD1362_CONV_BUFFER_LINES
+	int "Number of lines the conversion buffer can hold"
+	default 16
+	range 1 64
+	help
+	  Number of lines to convert at once. Higher values use more memory
+	  but may improve performance by reducing the number of transfers.
+
+endif # SSD1362
