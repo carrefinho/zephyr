@@ -382,6 +382,140 @@ uint8_t ll_req_peer_sca(uint16_t handle)
 }
 #endif /* CONFIG_BT_CTLR_SCA_UPDATE */
 
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+uint8_t ll_subrate_request(uint16_t handle, uint16_t subrate_min, uint16_t subrate_max,
+			   uint16_t max_latency, uint16_t continuation_number,
+			   uint16_t timeout)
+{
+	struct ll_conn *conn;
+	uint32_t timeout_us;
+	uint32_t max_interval_us;
+
+	conn = ll_connected_get(handle);
+	if (!conn) {
+		return BT_HCI_ERR_UNKNOWN_CONN_ID;
+	}
+
+	/* Validate parameters per BT Core Spec Vol 4, Part E, Section 7.8.124 */
+
+	/* Subrate_Max × (Max_Latency + 1) shall be <= 500 */
+	if (((uint32_t)subrate_max * (max_latency + 1U)) > 500U) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* Subrate_Max shall be >= Subrate_Min */
+	if (subrate_max < subrate_min) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* Continuation_Number shall be < Subrate_Max */
+	if (continuation_number >= subrate_max) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* Subrate_Min range: 0x0001 - 0x01F4 */
+	if (subrate_min < 0x0001U || subrate_min > 0x01F4U) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* Subrate_Max range: 0x0001 - 0x01F4 */
+	if (subrate_max < 0x0001U || subrate_max > 0x01F4U) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* Max_Latency range: 0x0000 - 0x01F3 */
+	if (max_latency > 0x01F3U) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* Continuation_Number range: 0x0000 - 0x01F3 */
+	if (continuation_number > 0x01F3U) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* Supervision_Timeout range: 0x000A - 0x0C80 (100ms - 32s) */
+	if (timeout < 0x000AU || timeout > 0x0C80U) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* Supervision_Timeout (ms) > 2 × connInterval × Subrate_Max × (Max_Latency + 1)
+	 * timeout is in units of 10ms, conn->lll.interval is in units of 1.25ms
+	 */
+	timeout_us = (uint32_t)timeout * 10000U;
+	max_interval_us = (uint32_t)conn->lll.interval * 1250U * subrate_max * (max_latency + 1U);
+	if (timeout_us <= 2U * max_interval_us) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	return ull_cp_subrate_request(conn, subrate_min, subrate_max, max_latency,
+				      continuation_number, timeout, 1U);
+}
+
+#if defined(CONFIG_BT_CENTRAL)
+uint8_t ll_set_default_subrate(uint16_t subrate_min, uint16_t subrate_max,
+			       uint16_t max_latency, uint16_t continuation_number,
+			       uint16_t timeout)
+{
+	uint16_t conn_count;
+	struct ll_conn *conn;
+
+	/* Validate parameters per BT Core Spec Vol 4, Part E, Section 7.8.123 */
+
+	/* Subrate_Max × (Max_Latency + 1) shall be <= 500 */
+	if (((uint32_t)subrate_max * (max_latency + 1U)) > 500U) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* Subrate_Max shall be >= Subrate_Min */
+	if (subrate_max < subrate_min) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* Continuation_Number shall be < Subrate_Max */
+	if (continuation_number >= subrate_max) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* Subrate_Min range: 0x0001 - 0x01F4 */
+	if (subrate_min < 0x0001U || subrate_min > 0x01F4U) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* Subrate_Max range: 0x0001 - 0x01F4 */
+	if (subrate_max < 0x0001U || subrate_max > 0x01F4U) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* Max_Latency range: 0x0000 - 0x01F3 */
+	if (max_latency > 0x01F3U) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* Continuation_Number range: 0x0000 - 0x01F3 */
+	if (continuation_number > 0x01F3U) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* Supervision_Timeout range: 0x000A - 0x0C80 (100ms - 32s) */
+	if (timeout < 0x000AU || timeout > 0x0C80U) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* Apply to all connections */
+	conn_count = CONFIG_BT_MAX_CONN;
+	for (uint16_t i = 0; i < conn_count; i++) {
+		conn = ll_conn_get(i);
+		if (conn && conn->lll.role == BT_HCI_ROLE_CENTRAL) {
+			ull_cp_set_default_subrate(conn, subrate_min, subrate_max,
+						   max_latency, continuation_number, timeout);
+		}
+	}
+
+	return BT_HCI_ERR_SUCCESS;
+}
+#endif /* CONFIG_BT_CENTRAL */
+#endif /* CONFIG_BT_CTLR_SUBRATING */
+
 static bool is_valid_disconnect_reason(uint8_t reason)
 {
 	switch (reason) {
@@ -975,6 +1109,68 @@ int ull_conn_llcp(struct ll_conn *conn, uint32_t ticks_at_expire,
 	return 0;
 }
 
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+/**
+ * @brief Calculate the number of events to skip to reach the next subrated event.
+ *
+ * A connection event is a subrated event if:
+ * (connEventCount - connSubrateBaseEvent) mod connSubrateFactor == 0
+ *
+ * @param lll Pointer to LLL connection context
+ * @param current_event The current event counter value
+ * @return Number of events to skip (0 means next event is subrated)
+ */
+static uint16_t subrate_events_to_skip(struct lll_conn *lll, uint16_t current_event)
+{
+	uint16_t factor = lll->subrate_factor;
+	uint16_t base_event = lll->subrate_base_event;
+	uint16_t offset;
+
+	/* If subrating is disabled (factor == 1), no events to skip */
+	if (factor <= 1U) {
+		return 0U;
+	}
+
+	/* Check if we're in a continuation phase */
+	if (lll->subrate_continuation_count < lll->subrate_continuation) {
+		/* Still in continuation, don't skip */
+		return 0U;
+	}
+
+	/* Calculate offset from base event (handles wraparound) */
+	offset = (current_event - base_event) % factor;
+
+	/* If offset is 0, next event is a subrated event */
+	if (offset == 0U) {
+		return 0U;
+	}
+
+	/* Return events to skip to reach next subrated event */
+	return factor - offset;
+}
+
+/**
+ * @brief Check if the current event is a subrated event.
+ *
+ * @param lll Pointer to LLL connection context
+ * @param event_counter The event counter to check
+ * @return true if this is a subrated event, false otherwise
+ */
+static bool subrate_is_subrated_event(struct lll_conn *lll, uint16_t event_counter)
+{
+	uint16_t factor = lll->subrate_factor;
+	uint16_t base_event = lll->subrate_base_event;
+
+	/* If subrating is disabled, every event is considered subrated */
+	if (factor <= 1U) {
+		return true;
+	}
+
+	/* Check if this event matches the subrate pattern */
+	return ((event_counter - base_event) % factor) == 0U;
+}
+#endif /* CONFIG_BT_CTLR_SUBRATING */
+
 void ull_conn_done(struct node_rx_event_done *done)
 {
 	uint32_t ticks_drift_minus;
@@ -1095,11 +1291,28 @@ void ull_conn_done(struct node_rx_event_done *done)
 			    memq_peek(lll->memq_tx.head,
 				      lll->memq_tx.tail, NULL)) {
 				lll->latency_event = 0U;
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+				/* Reset continuation count when data pending */
+				lll->subrate_continuation_count = 0U;
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 			} else if (lll->periph.latency_enabled) {
 				lll->latency_event = lll->latency;
 			}
 #endif /* CONFIG_BT_PERIPHERAL */
 		}
+
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+		/* Handle subrating continuation counter */
+		if (lll->subrate_factor > 1U) {
+			if (subrate_is_subrated_event(lll, lll->event_counter - 1U)) {
+				/* This was a subrated event, reset continuation counter */
+				lll->subrate_continuation_count = 0U;
+			} else if (lll->subrate_continuation_count < lll->subrate_continuation) {
+				/* This was a continuation event, increment counter */
+				lll->subrate_continuation_count++;
+			}
+		}
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 
 		/* Reset connection failed to establish countdown */
 		conn->connect_expire = 0U;
@@ -1299,6 +1512,31 @@ void ull_conn_done(struct node_rx_event_done *done)
 	if ((force) || (latency_event != lll->latency_event)) {
 		lazy = lll->latency_event + 1U;
 	}
+
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+	/* Apply subrating event skipping */
+	if (lll->subrate_factor > 1U) {
+		uint16_t subrate_skip;
+
+		/* Calculate how many events to skip to reach next subrated event */
+		subrate_skip = subrate_events_to_skip(lll, lll->event_counter);
+
+		/* Subrate skip takes precedence - we must wake up at subrated events
+		 * Note: lazy value represents events to skip + 1, so we add 1 to subrate_skip
+		 */
+		if (subrate_skip > 0U) {
+			uint16_t subrate_lazy = subrate_skip + 1U;
+
+			/* Use the larger of latency-based lazy or subrate-based lazy,
+			 * but cap at subrate_lazy to ensure we don't miss subrated events
+			 */
+			if (lazy == 0U || subrate_lazy < lazy) {
+				lazy = subrate_lazy;
+				force = 1U;
+			}
+		}
+	}
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 
 #if defined(CONFIG_BT_CTLR_SLOT_RESERVATION_UPDATE)
 #if defined(CONFIG_BT_CTLR_DATA_LENGTH) || defined(CONFIG_BT_CTLR_PHY)

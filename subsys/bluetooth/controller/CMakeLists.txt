@@ -82,6 +82,10 @@ if(CONFIG_BT_CONN)
     CONFIG_BT_CTLR_PHY
     ll_sw/ull_llcp_phy.c
     )
+  zephyr_library_sources_ifdef(
+    CONFIG_BT_CTLR_SUBRATING
+    ll_sw/ull_llcp_subrate.c
+    )
   if (CONFIG_BT_CTLR_PERIPHERAL_ISO OR
       CONFIG_BT_CTLR_CENTRAL_ISO)
     zephyr_library_sources(

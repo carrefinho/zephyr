@@ -172,6 +172,13 @@ struct lll_conn {
 #if defined(CONFIG_BT_CTLR_DF_CONN_CTE_TX)
 	struct lll_df_conn_tx_cfg df_tx_cfg;
 #endif /* CONFIG_BT_CTLR_DF_CONN_CTE_TX */
+
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+	uint16_t subrate_factor;        /* Subrate factor (1-500, 1 = no subrating) */
+	uint16_t subrate_base_event;    /* Base event counter for subrate calculation */
+	uint16_t subrate_continuation;  /* Continuation number max */
+	uint16_t subrate_continuation_count; /* Current continuation counter */
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 };
 
 int lll_conn_init(void);

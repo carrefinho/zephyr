@@ -92,6 +92,10 @@ helper_pdu_encode_func_t *const helper_pdu_encode[] = {
 	[LL_CTE_RSP] = helper_pdu_encode_cte_rsp,
 	[LL_CLOCK_ACCURACY_REQ] = helper_pdu_encode_sca_req,
 	[LL_CLOCK_ACCURACY_RSP] = helper_pdu_encode_sca_rsp,
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+	[LL_SUBRATE_REQ] = helper_pdu_encode_subrate_req,
+	[LL_SUBRATE_IND] = helper_pdu_encode_subrate_ind,
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 	[LL_CIS_REQ] = helper_pdu_encode_cis_req,
 	[LL_CIS_RSP] = helper_pdu_encode_cis_rsp,
 	[LL_CIS_IND] = helper_pdu_encode_cis_ind,
@@ -131,6 +135,10 @@ helper_pdu_verify_func_t *const helper_pdu_verify[] = {
 	[LL_CTE_RSP] = helper_pdu_verify_cte_rsp,
 	[LL_CLOCK_ACCURACY_REQ] = helper_pdu_verify_sca_req,
 	[LL_CLOCK_ACCURACY_RSP] = helper_pdu_verify_sca_rsp,
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+	[LL_SUBRATE_REQ] = helper_pdu_verify_subrate_req,
+	[LL_SUBRATE_IND] = helper_pdu_verify_subrate_ind,
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 	[LL_CIS_REQ] = helper_pdu_verify_cis_req,
 	[LL_CIS_RSP] = helper_pdu_verify_cis_rsp,
 	[LL_CIS_IND] = helper_pdu_verify_cis_ind,
@@ -168,6 +176,10 @@ helper_pdu_ntf_verify_func_t *const helper_pdu_ntf_verify[] = {
 	[LL_CTE_RSP] = NULL,
 	[LL_CLOCK_ACCURACY_REQ] = NULL,
 	[LL_CLOCK_ACCURACY_RSP] = NULL,
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+	[LL_SUBRATE_REQ] = NULL,
+	[LL_SUBRATE_IND] = NULL,
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 	[LL_CIS_REQ] = NULL,
 	[LL_CIS_RSP] = NULL,
 	[LL_CIS_IND] = NULL,
@@ -202,6 +214,10 @@ helper_node_encode_func_t *const helper_node_encode[] = {
 	[LL_CTE_RSP] = helper_node_encode_cte_rsp,
 	[LL_CLOCK_ACCURACY_REQ] = NULL,
 	[LL_CLOCK_ACCURACY_RSP] = NULL,
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+	[LL_SUBRATE_REQ] = NULL,
+	[LL_SUBRATE_IND] = NULL,
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 	[LL_CIS_REQ] = NULL,
 	[LL_CIS_RSP] = NULL,
 	[LL_CIS_IND] = NULL,
@@ -217,6 +233,9 @@ helper_node_verify_func_t *const helper_node_verify[] = {
 	[NODE_CIS_REQUEST] = helper_node_verify_cis_request,
 	[NODE_CIS_ESTABLISHED] = helper_node_verify_cis_established,
 	[NODE_PEER_SCA_UPDATE] = helper_node_verify_peer_sca_update,
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+	[NODE_SUBRATE_CHANGE] = helper_node_verify_subrate_change,
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 };
 
 /*

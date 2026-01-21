@@ -30,6 +30,7 @@ enum llcp_proc {
 	PROC_CIS_TERMINATE,
 	PROC_SCA_UPDATE,
 	PROC_PERIODIC_SYNC,
+	PROC_SUBRATE,
 	/* A helper enum entry, to use in pause procedure context */
 	PROC_NONE = 0x0,
 };
@@ -318,6 +319,21 @@ struct proc_ctx {
 			uint8_t error_code;
 		} sca_update;
 #endif /* CONFIG_BT_CTLR_SCA_UPDATE */
+
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+		struct {
+			uint16_t subrate_factor_min;
+			uint16_t subrate_factor_max;
+			uint16_t max_latency;
+			uint16_t continuation_number;
+			uint16_t timeout;
+			/* For LL_SUBRATE_IND */
+			uint16_t subrate_factor;
+			uint16_t subrate_base_event;
+			uint8_t  error;
+			uint8_t  host_initiated;
+		} subrate;
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 
 #if defined(CONFIG_BT_CTLR_SYNC_TRANSFER_RECEIVER) || defined(CONFIG_BT_CTLR_SYNC_TRANSFER_SENDER)
 		struct {
@@ -811,6 +827,26 @@ void llcp_pdu_decode_periodic_sync_ind(struct proc_ctx *ctx, struct pdu_data *pd
 void llcp_rp_past_run(struct ll_conn *conn, struct proc_ctx *ctx, void *param);
 void llcp_rp_past_rx(struct ll_conn *conn, struct proc_ctx *ctx, struct node_rx_pdu *rx);
 #endif /* CONFIG_BT_CTLR_SYNC_TRANSFER_RECEIVER */
+
+/*
+ * Connection Subrating Procedure Helper
+ */
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+void llcp_pdu_encode_subrate_req(struct proc_ctx *ctx, struct pdu_data *pdu);
+void llcp_pdu_decode_subrate_req(struct proc_ctx *ctx, struct pdu_data *pdu);
+void llcp_pdu_encode_subrate_ind(struct proc_ctx *ctx, struct pdu_data *pdu);
+void llcp_pdu_decode_subrate_ind(struct proc_ctx *ctx, struct pdu_data *pdu);
+
+void llcp_lp_subrate_init_proc(struct proc_ctx *ctx);
+void llcp_lp_subrate_run(struct ll_conn *conn, struct proc_ctx *ctx, void *param);
+void llcp_lp_subrate_rx(struct ll_conn *conn, struct proc_ctx *ctx, struct node_rx_pdu *rx);
+void llcp_lp_subrate_tx_ack(struct ll_conn *conn, struct proc_ctx *ctx, struct pdu_data *pdu);
+
+void llcp_rp_subrate_init_proc(struct proc_ctx *ctx);
+void llcp_rp_subrate_run(struct ll_conn *conn, struct proc_ctx *ctx, void *param);
+void llcp_rp_subrate_rx(struct ll_conn *conn, struct proc_ctx *ctx, struct node_rx_pdu *rx);
+void llcp_rp_subrate_tx_ack(struct ll_conn *conn, struct proc_ctx *ctx, struct pdu_data *pdu);
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 
 #ifdef ZTEST_UNITTEST
 bool llcp_lr_is_disconnected(struct ll_conn *conn);

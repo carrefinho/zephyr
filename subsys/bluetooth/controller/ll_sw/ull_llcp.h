@@ -275,6 +275,24 @@ void ull_cp_cte_rsp_enable(struct ll_conn *conn, bool enable, uint8_t max_cte_le
 uint8_t ull_cp_req_peer_sca(struct ll_conn *conn);
 #endif /* CONFIG_BT_CTLR_SCA_UPDATE */
 
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+/**
+ * @brief Initiate a Subrate Request Procedure.
+ */
+uint8_t ull_cp_subrate_request(struct ll_conn *conn, uint16_t subrate_min, uint16_t subrate_max,
+			       uint16_t max_latency, uint16_t continuation_number,
+			       uint16_t timeout, uint8_t host_initiated);
+
+#if defined(CONFIG_BT_CENTRAL)
+/**
+ * @brief Set default subrate parameters for accepting peripheral requests.
+ */
+uint8_t ull_cp_set_default_subrate(struct ll_conn *conn, uint16_t subrate_min, uint16_t subrate_max,
+				   uint16_t max_latency, uint16_t continuation_number,
+				   uint16_t timeout);
+#endif /* CONFIG_BT_CENTRAL */
+#endif /* CONFIG_BT_CTLR_SUBRATING */
+
 #if defined(CONFIG_BT_CTLR_SYNC_TRANSFER_SENDER)
 struct ll_adv_sync_set;
 struct ll_sync_set;

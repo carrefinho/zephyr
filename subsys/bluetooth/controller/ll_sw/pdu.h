@@ -623,6 +623,11 @@ enum pdu_data_llctrl_type {
 	PDU_DATA_LLCTRL_TYPE_CIS_RSP = 0x20,
 	PDU_DATA_LLCTRL_TYPE_CIS_IND = 0x21,
 	PDU_DATA_LLCTRL_TYPE_CIS_TERMINATE_IND = 0x22,
+	PDU_DATA_LLCTRL_TYPE_POWER_CONTROL_REQ = 0x23,
+	PDU_DATA_LLCTRL_TYPE_POWER_CONTROL_RSP = 0x24,
+	PDU_DATA_LLCTRL_TYPE_POWER_CHANGE_IND = 0x25,
+	PDU_DATA_LLCTRL_TYPE_SUBRATE_REQ = 0x26,
+	PDU_DATA_LLCTRL_TYPE_SUBRATE_IND = 0x27,
 	PDU_DATA_LLCTRL_TYPE_UNUSED = 0xFF
 };
 
@@ -910,6 +915,22 @@ struct pdu_data_llctrl_periodic_sync_ind {
 	uint16_t sync_conn_event_count;
 } __packed;
 
+struct pdu_data_llctrl_subrate_req {
+	uint16_t subrate_factor_min;
+	uint16_t subrate_factor_max;
+	uint16_t max_latency;
+	uint16_t continuation_number;
+	uint16_t timeout;
+} __packed;
+
+struct pdu_data_llctrl_subrate_ind {
+	uint16_t subrate_factor;
+	uint16_t subrate_base_event;
+	uint16_t latency;
+	uint16_t continuation_number;
+	uint16_t timeout;
+} __packed;
+
 struct pdu_data_llctrl {
 	uint8_t opcode;
 	union {
@@ -948,6 +969,8 @@ struct pdu_data_llctrl {
 		struct pdu_data_llctrl_cis_ind cis_ind;
 		struct pdu_data_llctrl_cis_terminate_ind cis_terminate_ind;
 		struct pdu_data_llctrl_periodic_sync_ind periodic_sync_ind;
+		struct pdu_data_llctrl_subrate_req subrate_req;
+		struct pdu_data_llctrl_subrate_ind subrate_ind;
 	} __packed;
 } __packed;
 

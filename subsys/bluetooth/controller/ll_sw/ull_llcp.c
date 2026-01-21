@@ -466,6 +466,22 @@ void ull_llcp_init(struct ll_conn *conn)
 
 	conn->llcp.tx_node_release = NULL;
 	conn->llcp.rx_node_release = NULL;
+
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+	/* Initialize subrating ULL state */
+	conn->subrate.factor = 1U;
+	conn->subrate.base_event = 0U;
+	conn->subrate.latency = 0U;
+	conn->subrate.continuation_number = 0U;
+#if defined(CONFIG_BT_CENTRAL)
+	/* Initialize central default subrate parameters to accept any request */
+	conn->subrate.defaults.subrate_min = 1U;
+	conn->subrate.defaults.subrate_max = 500U;
+	conn->subrate.defaults.max_latency = 499U;
+	conn->subrate.defaults.continuation_number = 0U;
+	conn->subrate.defaults.timeout = 0x0C80; /* Default supervision timeout */
+#endif /* CONFIG_BT_CENTRAL */
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 }
 
 void ull_cp_release_tx(struct ll_conn *conn, struct node_tx *tx)
@@ -2062,6 +2078,46 @@ struct proc_ctx *llcp_create_procedure(enum llcp_proc proc)
 	return create_procedure(proc, &mem_local_ctx);
 }
 #endif
+
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+uint8_t ull_cp_subrate_request(struct ll_conn *conn, uint16_t subrate_min, uint16_t subrate_max,
+			       uint16_t max_latency, uint16_t continuation_number,
+			       uint16_t timeout, uint8_t host_initiated)
+{
+	struct proc_ctx *ctx;
+
+	ctx = llcp_create_local_procedure(PROC_SUBRATE);
+	if (!ctx) {
+		return BT_HCI_ERR_CMD_DISALLOWED;
+	}
+
+	ctx->data.subrate.subrate_factor_min = subrate_min;
+	ctx->data.subrate.subrate_factor_max = subrate_max;
+	ctx->data.subrate.max_latency = max_latency;
+	ctx->data.subrate.continuation_number = continuation_number;
+	ctx->data.subrate.timeout = timeout;
+	ctx->data.subrate.host_initiated = host_initiated;
+
+	llcp_lr_enqueue(conn, ctx);
+
+	return BT_HCI_ERR_SUCCESS;
+}
+
+#if defined(CONFIG_BT_CENTRAL)
+uint8_t ull_cp_set_default_subrate(struct ll_conn *conn, uint16_t subrate_min, uint16_t subrate_max,
+				   uint16_t max_latency, uint16_t continuation_number,
+				   uint16_t timeout)
+{
+	conn->subrate.defaults.subrate_min = subrate_min;
+	conn->subrate.defaults.subrate_max = subrate_max;
+	conn->subrate.defaults.max_latency = max_latency;
+	conn->subrate.defaults.continuation_number = continuation_number;
+	conn->subrate.defaults.timeout = timeout;
+
+	return BT_HCI_ERR_SUCCESS;
+}
+#endif /* CONFIG_BT_CENTRAL */
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 
 bool phy_valid(uint8_t phy)
 {

@@ -263,6 +263,27 @@ struct ll_conn {
 	/* Detect empty L2CAP start frame */
 	uint8_t  start_empty:1;
 #endif /* CONFIG_BT_CTLR_LLID_DATA_START_EMPTY */
+
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+	struct {
+		/* Current subrate parameters */
+		uint16_t factor;              /* connSubrateFactor (1-500) */
+		uint16_t base_event;          /* connSubrateBaseEvent */
+		uint16_t continuation_number; /* connContinuationNumber */
+		uint16_t latency;             /* connPeripheralLatency in subrated events */
+
+#if defined(CONFIG_BT_CENTRAL)
+		/* Default acceptable parameters for Peripheral requests (Central only) */
+		struct {
+			uint16_t subrate_min;
+			uint16_t subrate_max;
+			uint16_t max_latency;
+			uint16_t continuation_number;
+			uint16_t timeout;
+		} defaults;
+#endif /* CONFIG_BT_CENTRAL */
+	} subrate;
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 }; /* struct ll_conn */
 
 struct node_rx_cc {
@@ -301,3 +322,13 @@ struct node_rx_sca {
 	uint8_t status;
 	uint8_t sca;
 };
+
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+struct node_rx_subrate {
+	uint8_t  status;
+	uint16_t factor;
+	uint16_t latency;
+	uint16_t continuation_number;
+	uint16_t timeout;
+};
+#endif /* CONFIG_BT_CTLR_SUBRATING */

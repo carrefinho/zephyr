@@ -1095,6 +1095,14 @@ uint8_t ll_adv_enable(uint8_t enable)
 		conn_lll->df_tx_cfg.is_initialized = 0U;
 		conn_lll->df_tx_cfg.cte_rsp_en = 0U;
 #endif /* CONFIG_BT_CTLR_DF_CONN_CTE_TX */
+
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+		/* Initialize subrating to disabled state (factor = 1) */
+		conn_lll->subrate_factor = 1U;
+		conn_lll->subrate_base_event = 0U;
+		conn_lll->subrate_continuation = 0U;
+		conn_lll->subrate_continuation_count = 0U;
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 		conn->connect_expire = 6;
 		conn->supervision_expire = 0;
 

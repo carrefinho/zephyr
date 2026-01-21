@@ -2536,6 +2536,56 @@ static void le_req_peer_sca(struct net_buf *buf, struct net_buf **evt)
 }
 #endif /* CONFIG_BT_CTLR_SCA_UPDATE */
 
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+#if defined(CONFIG_BT_CENTRAL)
+static void le_set_default_subrate(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_cp_le_set_default_subrate *cmd = (void *)buf->data;
+	uint16_t subrate_min;
+	uint16_t subrate_max;
+	uint16_t max_latency;
+	uint16_t continuation_number;
+	uint16_t supervision_timeout;
+	uint8_t status;
+
+	subrate_min = sys_le16_to_cpu(cmd->subrate_min);
+	subrate_max = sys_le16_to_cpu(cmd->subrate_max);
+	max_latency = sys_le16_to_cpu(cmd->max_latency);
+	continuation_number = sys_le16_to_cpu(cmd->continuation_number);
+	supervision_timeout = sys_le16_to_cpu(cmd->supervision_timeout);
+
+	status = ll_set_default_subrate(subrate_min, subrate_max, max_latency,
+					continuation_number, supervision_timeout);
+
+	*evt = cmd_complete_status(status);
+}
+#endif /* CONFIG_BT_CENTRAL */
+
+static void le_subrate_request(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_cp_le_subrate_request *cmd = (void *)buf->data;
+	uint16_t handle;
+	uint16_t subrate_min;
+	uint16_t subrate_max;
+	uint16_t max_latency;
+	uint16_t continuation_number;
+	uint16_t supervision_timeout;
+	uint8_t status;
+
+	handle = sys_le16_to_cpu(cmd->handle);
+	subrate_min = sys_le16_to_cpu(cmd->subrate_min);
+	subrate_max = sys_le16_to_cpu(cmd->subrate_max);
+	max_latency = sys_le16_to_cpu(cmd->max_latency);
+	continuation_number = sys_le16_to_cpu(cmd->continuation_number);
+	supervision_timeout = sys_le16_to_cpu(cmd->supervision_timeout);
+
+	status = ll_subrate_request(handle, subrate_min, subrate_max, max_latency,
+				    continuation_number, supervision_timeout);
+
+	*evt = cmd_status(status);
+}
+#endif /* CONFIG_BT_CTLR_SUBRATING */
+
 #if defined(CONFIG_BT_CENTRAL) || defined(CONFIG_BT_CTLR_PER_INIT_FEAT_XCHG)
 static void le_read_remote_features(struct net_buf *buf, struct net_buf **evt)
 {
@@ -4669,6 +4719,17 @@ static int controller_cmd_handle(uint16_t  ocf, struct net_buf *cmd,
 		le_req_peer_sca(cmd, evt);
 		break;
 #endif /* CONFIG_BT_CTLR_SCA_UPDATE */
+
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+#if defined(CONFIG_BT_CENTRAL)
+	case BT_OCF(BT_HCI_OP_LE_SET_DEFAULT_SUBRATE):
+		le_set_default_subrate(cmd, evt);
+		break;
+#endif /* CONFIG_BT_CENTRAL */
+	case BT_OCF(BT_HCI_OP_LE_SUBRATE_REQUEST):
+		le_subrate_request(cmd, evt);
+		break;
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 
 #if defined(CONFIG_BT_CTLR_ISO)
 	case BT_OCF(BT_HCI_OP_LE_SETUP_ISO_PATH):
@@ -8650,6 +8711,34 @@ static void le_req_peer_sca_complete(struct pdu_data *pdu, uint16_t handle,
 	sep->sca = scau->sca;
 }
 #endif /* CONFIG_BT_CTLR_SCA_UPDATE */
+
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+static void le_subrate_change(struct pdu_data *pdu, uint16_t handle,
+			      struct net_buf *buf)
+{
+	struct bt_hci_evt_le_subrate_change *sep;
+	struct node_rx_subrate *sr;
+
+	sr = (void *)pdu;
+
+	if (!(event_mask & BT_EVT_MASK_LE_META_EVENT) ||
+	    !(le_event_mask & BT_EVT_MASK_LE_SUBRATE_CHANGE)) {
+		LOG_WRN("handle: 0x%04x, status: %x, factor: %u.", handle,
+			sr->status,
+			sr->factor);
+		return;
+	}
+
+	sep = meta_evt(buf, BT_HCI_EVT_LE_SUBRATE_CHANGE, sizeof(*sep));
+
+	sep->status = sr->status;
+	sep->handle = sys_cpu_to_le16(handle);
+	sep->subrate_factor = sys_cpu_to_le16(sr->factor);
+	sep->peripheral_latency = sys_cpu_to_le16(sr->latency);
+	sep->continuation_number = sys_cpu_to_le16(sr->continuation_number);
+	sep->supervision_timeout = sys_cpu_to_le16(sr->timeout);
+}
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 #endif /* CONFIG_BT_CONN */
 
 #if defined(CONFIG_BT_HCI_MESH_EXT)
@@ -8833,6 +8922,12 @@ static void encode_control(struct node_rx_pdu *node_rx,
 		le_req_peer_sca_complete(pdu_data, handle, buf);
 		return;
 #endif /* CONFIG_BT_CTLR_SCA_UPDATE */
+
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+	case NODE_RX_TYPE_SUBRATE_CHANGE:
+		le_subrate_change(pdu_data, handle, buf);
+		return;
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 
 #if defined(CONFIG_BT_CTLR_DF_CONN_CTE_RX)
 	case NODE_RX_TYPE_CONN_IQ_SAMPLE_REPORT:
@@ -9293,6 +9388,10 @@ uint8_t hci_get_class(struct node_rx_pdu *node_rx)
 #if defined(CONFIG_BT_CTLR_SCA_UPDATE)
 		case NODE_RX_TYPE_REQ_PEER_SCA_COMPLETE:
 #endif /* CONFIG_BT_CTLR_SCA_UPDATE */
+
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+		case NODE_RX_TYPE_SUBRATE_CHANGE:
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 
 #if defined(CONFIG_BT_CTLR_CONN_ISO)
 		case NODE_RX_TYPE_CIS_ESTABLISHED:
