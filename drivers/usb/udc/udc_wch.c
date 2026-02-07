@@ -169,7 +169,7 @@ static void udc_wch_xfer_next(const struct device *dev, const uint8_t ep)
 	}
 
 	/* FIXME */
-	k_busy_wait(1000);
+	// k_busy_wait(1000);
 }
 
 static ALWAYS_INLINE void wch_thread_handler(void *const arg)
@@ -368,7 +368,7 @@ static void udc_wch_isr_handler(const struct device *dev)
 			ret = udc_wch_xfer_in(dev);
 			if (ret) { /* FIXME */
 				regs->INT_FG = USBOTG_UIE_TRANSFER;
-				k_busy_wait(100);
+				// k_busy_wait(100);
 				return;
 			}
 
