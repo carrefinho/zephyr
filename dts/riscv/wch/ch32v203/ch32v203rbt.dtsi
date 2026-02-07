@@ -14,8 +14,9 @@
 	reg = <0x20000000 DT_SIZE_K(64)>;
 };
 
-soc {
-	usart3: uart@40004800 {
+/ {
+	soc {
+		usart3: uart@40004800 {
 		compatible = "wch,usart";
 		reg = <0x40004800 0x20>;
 		clocks = <&rcc CH32V20X_V30X_CLOCK_USART3>;
@@ -32,4 +33,5 @@ soc {
 		interrupts = <68>;
 		status = "disabled";
 	};
+};
 };
