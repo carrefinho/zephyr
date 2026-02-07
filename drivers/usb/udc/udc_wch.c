@@ -16,6 +16,24 @@
 
 #include <hal_ch32fun.h>
 
+/* The ch32v30x/l103 headers provide USBFS_ aliases; ch32v20x only has the
+ * USBOTG_ names for the same peripheral. Alias them here so the driver
+ * builds for both families.
+ */
+#ifndef USBFS_UIS_TOKEN_MASK
+#define USBFS_UIS_TOKEN_MASK  USBOTG_UIS_TOKEN
+#define USBFS_UIS_TOKEN_OUT   0x00
+#define USBFS_UIS_TOKEN_IN    0x20
+#define USBFS_UIS_TOKEN_SETUP 0x30
+#define USBFS_UIS_ENDP_MASK   USBOTG_UIS_ENDP
+#define USBFS_UEP_T_RES_ACK   USBOTG_UEP_T_RES_ACK
+#define USBFS_UEP_T_RES_NAK   USBOTG_UEP_T_RES_NAK
+#define USBFS_UEP_T_TOG       USBOTG_UEP_T_TOG
+#define USBFS_UEP_R_RES_ACK   USBOTG_UEP_R_RES_ACK
+#define USBFS_UEP_R_RES_NAK   USBOTG_UEP_R_RES_NAK
+#define USBFS_UEP_R_TOG       USBOTG_UEP_R_TOG
+#endif
+
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(udc_wch, CONFIG_UDC_DRIVER_LOG_LEVEL);
 
@@ -74,10 +92,6 @@ static void udc_wch_handle_setup(const struct device *dev)
 	struct udc_wch_data *priv = udc_get_private(dev);
 	const struct udc_wch_config *config = dev->config;
 	USBOTG_FS_TypeDef *regs = config->regs;
-	struct usb_setup_packet *setup;
-	struct net_buf *buf;
-	int err;
-
 	regs->UEP0_TX_CTRL = USBFS_UEP_T_TOG | USBFS_UEP_T_RES_NAK;
 	regs->UEP0_RX_CTRL = USBFS_UEP_R_TOG | USBFS_UEP_R_RES_NAK;
 
@@ -87,32 +101,7 @@ static void udc_wch_handle_setup(const struct device *dev)
 	cfg = udc_get_ep_cfg(dev, USB_CONTROL_EP_OUT);
 	cfg->stat.halted = false;
 
-	setup = (struct usb_setup_packet *)&priv->setup;
-
-	buf = udc_ctrl_alloc(dev, USB_CONTROL_EP_OUT, sizeof(struct usb_setup_packet));
-	if (buf == NULL) {
-		LOG_ERR("Failed to allocate for setup");
-		return;
-	}
-
-	udc_ep_buf_set_setup(buf);
-	net_buf_add_mem(buf, priv->setup, sizeof(priv->setup));
-
-	/* Update to next stage of control transfer */
-	udc_ctrl_update_stage(dev, buf);
-
-	if (udc_ctrl_stage_is_data_out(dev)) {
-		/*  Allocate and feed buffer for data OUT stage */
-		LOG_DBG("s:%p|feed for -out-", buf);
-		err = usbd_ctrl_feed_dout(dev, udc_data_stage_length(buf));
-		if (err == -ENOMEM) {
-			err = udc_submit_ep_event(dev, buf, err);
-		}
-	} else if (udc_ctrl_stage_is_data_in(dev)) {
-		udc_ctrl_submit_s_in_status(dev);
-	} else {
-		udc_ctrl_submit_s_status(dev);
-	}
+	udc_setup_received(dev, priv->setup);
 }
 
 static void udc_wch_xfer_next(const struct device *dev, const uint8_t ep)
@@ -161,7 +150,14 @@ static void udc_wch_xfer_next(const struct device *dev, const uint8_t ep)
 				dma_reg = &regs->UEP0_DMA + USB_EP_GET_IDX(ep);
 				rx_ctrl = &regs->UEP0_RX_CTRL + 4 * USB_EP_GET_IDX(ep);
 
-				*dma_reg = (uint32_t)buf->data;
+				if (ep == USB_CONTROL_EP_OUT && udc_get_buf_info(buf)->setup) {
+					/* Receive SETUP packets into the private buffer */
+					struct udc_wch_data *priv = udc_get_private(dev);
+
+					*dma_reg = (uint32_t)&priv->setup;
+				} else {
+					*dma_reg = (uint32_t)buf->data;
+				}
 				*rx_ctrl =
 					(*rx_ctrl & ~USBOTG_UEP_R_RES_MASK) | USBOTG_UEP_R_RES_ACK;
 			}
@@ -252,23 +248,10 @@ static int udc_wch_xfer_in(const struct device *dev)
 
 		buf = udc_buf_get(ep_cfg);
 
-		regs->UEP0_TX_CTRL = USBFS_UEP_R_RES_NAK;
+		regs->UEP0_TX_CTRL = (regs->UEP0_TX_CTRL & ~USBOTG_UEP_T_RES_MASK) |
+				     USBOTG_UEP_T_RES_NAK;
 
-		if (udc_ctrl_stage_is_status_in(dev) || udc_ctrl_stage_is_no_data(dev)) {
-			/* Status stage finished, notify upper layer */
-			regs->UEP0_RX_CTRL = USBFS_UEP_T_TOG | USBFS_UEP_T_RES_ACK;
-			udc_wch_set_status_buffer(dev);
-			udc_ctrl_submit_status(dev, buf);
-		}
-
-		/* Update to next stage of control transfer */
-		udc_ctrl_update_stage(dev, buf);
-
-		if (udc_ctrl_stage_is_status_out(dev)) {
-			/* IN transfer finished, release buffer */
-			usbd_ctrl_feed_dout(dev, 0);
-			net_buf_unref(buf);
-		}
+		udc_submit_ep_event(dev, buf, 0);
 	} else {
 		tx_ctrl = &regs->UEP0_TX_CTRL + 4 * ep_idx;
 
@@ -327,18 +310,15 @@ static void udc_wch_xfer_out(const struct device *dev)
 	}
 
 	if (ep == USB_CONTROL_EP_OUT) {
+		struct udc_wch_data *priv = udc_get_private(dev);
 
-		if (udc_ctrl_stage_is_status_out(dev)) {
-			/* Status stage finished, notify upper layer */
-			udc_ctrl_submit_status(dev, buf);
-			udc_wch_set_status_buffer(dev);
-		}
-		udc_ctrl_update_stage(dev, buf);
+		len = regs->RX_LEN;
+		net_buf_add(buf, len);
+		udc_submit_ep_event(dev, buf, 0);
 
-		if (udc_ctrl_stage_is_status_in(dev)) {
-			udc_ctrl_submit_s_out_status(dev, buf);
-		}
-
+		/* Rearm EP0 RX for the next SETUP packet (always DATA0) */
+		regs->UEP0_DMA = (uint32_t)&priv->setup;
+		regs->UEP0_RX_CTRL = USBFS_UEP_R_RES_ACK;
 	} else {
 		rx_ctrl = &regs->UEP0_RX_CTRL + 4 * USB_EP_GET_IDX(ep);
 		*rx_ctrl ^= USBOTG_UEP_R_TOG;
@@ -432,14 +412,10 @@ static int udc_wch_ep_enqueue(const struct device *dev, struct udc_ep_config *co
 static int udc_wch_ep_dequeue(const struct device *dev, struct udc_ep_config *const cfg)
 {
 	unsigned int lock_key;
-	struct net_buf *buf;
 
 	lock_key = irq_lock();
 
-	buf = udc_buf_get_all(cfg);
-	if (buf) {
-		udc_submit_ep_event(dev, buf, -ECONNABORTED);
-	}
+	udc_ep_cancel_queued(dev, cfg);
 
 	irq_unlock(lock_key);
 
