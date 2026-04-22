@@ -320,16 +320,28 @@ static int lp50xx_init(const struct device *dev)
 static int lp50xx_pm_action(const struct device *dev,
 			    enum pm_device_action action)
 {
+	int err;
+
 	switch (action) {
 	case PM_DEVICE_ACTION_SUSPEND:
-		return lp50xx_enable(dev, false);
+		err = lp50xx_enable(dev, false);
+		if (err < 0) {
+			return err;
+		}
+		return lp50xx_hw_enable(dev, false);
 	case PM_DEVICE_ACTION_RESUME:
+		err = lp50xx_hw_enable(dev, true);
+		if (err < 0) {
+			return err;
+		}
+		err = lp50xx_reset(dev);
+		if (err < 0) {
+			return err;
+		}
 		return lp50xx_enable(dev, true);
 	default:
 		return -ENOTSUP;
 	}
-
-	return 0;
 }
 #endif /* CONFIG_PM_DEVICE */
 
