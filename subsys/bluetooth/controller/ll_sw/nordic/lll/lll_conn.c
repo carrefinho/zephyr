@@ -71,6 +71,23 @@ static uint16_t tx_cnt;
 static uint16_t trx_cnt;
 static uint8_t trx_busy_iteration;
 
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+/* Set when a non-empty (Length>0) PDU is tx/rx'd in the event; reported to ULL
+ * via node_rx_event_done to drive subrating continuation events (Vol 6, B, 4.5.1).
+ */
+static uint8_t has_nonempty_pdu;
+#define SUBRATE_NONEMPTY_PDU_INIT() { has_nonempty_pdu = 0U; }
+#define SUBRATE_NONEMPTY_PDU_SET(_len) \
+		do { \
+			if (_len) { \
+				has_nonempty_pdu = 1U; \
+			} \
+		} while (false)
+#else /* !CONFIG_BT_CTLR_SUBRATING */
+#define SUBRATE_NONEMPTY_PDU_INIT()
+#define SUBRATE_NONEMPTY_PDU_SET(_len)
+#endif /* !CONFIG_BT_CTLR_SUBRATING */
+
 #if defined(CONFIG_BT_CTLR_LE_ENC)
 static uint8_t mic_state;
 #endif /* CONFIG_BT_CTLR_LE_ENC */
@@ -155,6 +172,8 @@ void lll_conn_prepare_reset(void)
 	crc_expire = 0U;
 	is_aborted = 0U;
 	trx_busy_iteration = 0U;
+
+	SUBRATE_NONEMPTY_PDU_INIT();
 
 #if defined(CONFIG_BT_CTLR_LE_ENC)
 	mic_state = LLL_CONN_MIC_NONE;
@@ -297,6 +316,10 @@ void lll_conn_abort_cb(struct lll_prepare_param *prepare_param, void *param)
 	e->crc_valid = 0U;
 	e->is_aborted = 1U;
 
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+	e->has_nonempty_pdu = 0U;
+#endif /* CONFIG_BT_CTLR_SUBRATING */
+
 #if defined(CONFIG_BT_CTLR_LE_ENC)
 	e->mic_state = LLL_CONN_MIC_NONE;
 #endif /* CONFIG_BT_CTLR_LE_ENC */
@@ -396,6 +419,9 @@ void lll_conn_isr_rx(void *param)
 
 		/* CRC valid flag used to detect supervision timeout */
 		crc_valid = 1U;
+
+		/* Non-empty Rx keeps the subrating continuation window open */
+		SUBRATE_NONEMPTY_PDU_SET(pdu_data_rx->len);
 	} else {
 		/* Start CRC error countdown, if not already started */
 		if (crc_expire == 0U) {
@@ -424,6 +450,9 @@ void lll_conn_isr_rx(void *param)
 	/* prepare tx packet */
 	is_empty_pdu_tx_retry = lll->empty;
 	lll_conn_pdu_tx_prep(lll, &pdu_data_tx);
+
+	/* Non-empty Tx keeps the subrating continuation window open */
+	SUBRATE_NONEMPTY_PDU_SET(pdu_data_tx->len);
 
 #if defined(CONFIG_BT_CTLR_DF_CONN_CTE_TX)
 	if (pdu_data_tx->cp) {
@@ -1047,6 +1076,10 @@ static void isr_done(void *param)
 	e->trx_cnt = trx_cnt;
 	e->crc_valid = crc_valid;
 	e->is_aborted = is_aborted;
+
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+	e->has_nonempty_pdu = has_nonempty_pdu;
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 
 #if defined(CONFIG_BT_CTLR_LE_ENC)
 	e->mic_state = mic_state;
