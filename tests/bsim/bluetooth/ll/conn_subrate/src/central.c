@@ -55,6 +55,7 @@ static volatile uint16_t subrate_factor;
 static volatile uint16_t conn_interval;
 static volatile int read_err;
 static volatile bool collision_mode;
+static volatile bool phy_updated;
 static K_SEM_DEFINE(read_done, 0, 1);
 
 static uint8_t read_func(struct bt_conn *conn, uint8_t err,
@@ -94,6 +95,12 @@ static void le_param_updated(struct bt_conn *conn, uint16_t interval,
 	conn_interval = interval;
 }
 
+static void le_phy_updated(struct bt_conn *conn, struct bt_conn_le_phy_info *info)
+{
+	printk("Central PHY updated: tx %u rx %u\n", info->tx_phy, info->rx_phy);
+	phy_updated = true;
+}
+
 static void connected(struct bt_conn *conn, uint8_t conn_err)
 {
 	if (conn_err) {
@@ -119,6 +126,7 @@ static struct bt_conn_cb conn_callbacks = {
 	.disconnected = disconnected,
 	.subrate_changed = subrate_changed,
 	.le_param_updated = le_param_updated,
+	.le_phy_updated = le_phy_updated,
 };
 
 static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
@@ -321,6 +329,23 @@ static void test_central_main_transitions(void)
 	SUBRATE_WAIT(default_conn && subrate_factor == SUBRATE_MTON_M);
 	printk("Central: peripheral negotiated M=%u\n", subrate_factor);
 
+	/* Out-of-range parameters must be rejected (subrate_max > 0x01F4). */
+	{
+		struct bt_conn_le_subrate_param bad = {
+			.subrate_min = 1U,
+			.subrate_max = 600U,
+			.max_latency = 0U,
+			.continuation_number = 0U,
+			.supervision_timeout = CONN_TIMEOUT_UNITS,
+		};
+
+		if (bt_conn_le_subrate_request(default_conn, &bad) == 0) {
+			FAIL("Out-of-range subrate request was accepted\n");
+			return;
+		}
+		printk("Central: out-of-range subrate request rejected\n");
+	}
+
 	err = bt_conn_le_subrate_request(default_conn, &to_n);
 	if (err) {
 		FAIL("Central M->N subrate request failed (err %d)\n", err);
@@ -486,6 +511,101 @@ static void test_central_main_collision(void)
 	bs_trace_silent_exit(0);
 }
 
+static void test_central_main_phy(void)
+{
+	uint32_t interval_ms;
+	int64_t mn, mx;
+	int err;
+
+	if (central_start()) {
+		return;
+	}
+	SUBRATE_WAIT(default_conn && subrate_factor >= 2U);
+	interval_ms = interval_to_ms(CONN_INTERVAL_UNITS);
+
+	if (probe_minmax(NUM_READS / 2, READ_GAP_MS, &mn, &mx)) {
+		return;
+	}
+	if (mx < (subrate_factor * interval_ms) / 2U) {
+		FAIL("No skip before PHY update: max %lld ms\n", mx);
+		return;
+	}
+
+	/* A PHY update is an instant-based procedure: the steady-state gate must
+	 * keep both present every event so it completes, and subrating must
+	 * survive it (the interval is unchanged).
+	 */
+	phy_updated = false;
+	err = bt_conn_le_phy_update(default_conn, BT_CONN_LE_PHY_PARAM_2M);
+	if (err) {
+		FAIL("Central PHY update request failed (err %d)\n", err);
+		return;
+	}
+	SUBRATE_WAIT(phy_updated);
+	printk("Central: PHY updated while subrated\n");
+
+	if (probe_minmax(NUM_READS / 2, READ_GAP_MS, &mn, &mx)) {
+		return;
+	}
+	if (mx < (subrate_factor * interval_ms) / 2U) {
+		FAIL("Subrating lost after PHY update: max %lld ms\n", mx);
+		return;
+	}
+
+	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	PASS("Central PHY-update-while-subrated validated\n");
+	bs_trace_silent_exit(0);
+}
+
+static void test_central_main_disable(void)
+{
+	struct bt_conn_le_subrate_param to_one = {
+		.subrate_min = 1U,
+		.subrate_max = 1U,
+		.max_latency = 0U,
+		.continuation_number = 0U,
+		.supervision_timeout = CONN_TIMEOUT_UNITS,
+	};
+	uint32_t interval_ms;
+	int64_t mn, mx;
+	int err;
+
+	if (central_start()) {
+		return;
+	}
+	SUBRATE_WAIT(default_conn && subrate_factor >= 2U);
+	interval_ms = interval_to_ms(CONN_INTERVAL_UNITS);
+
+	if (probe_minmax(NUM_READS / 2, READ_GAP_MS, &mn, &mx)) {
+		return;
+	}
+	if (mx < (subrate_factor * interval_ms) / 2U) {
+		FAIL("No skip before disable: max %lld ms\n", mx);
+		return;
+	}
+
+	/* Explicitly disable subrating (factor 1); skipping must stop. */
+	err = bt_conn_le_subrate_request(default_conn, &to_one);
+	if (err) {
+		FAIL("Central N->1 subrate request failed (err %d)\n", err);
+		return;
+	}
+	SUBRATE_WAIT(subrate_factor == 1U);
+	printk("Central: subrating disabled (factor 1)\n");
+
+	if (probe_minmax(NUM_READS / 2, READ_GAP_MS, &mn, &mx)) {
+		return;
+	}
+	if (mx >= 3U * interval_ms) {
+		FAIL("Still skipping after N->1 disable: max %lld ms\n", mx);
+		return;
+	}
+
+	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	PASS("Central N->1 disable validated (max latency %lld ms)\n", mx);
+	bs_trace_silent_exit(0);
+}
+
 static void test_central_init(void)
 {
 	bst_ticker_set_next_tick_absolute(WAIT_TIME * 1e6);
@@ -537,6 +657,22 @@ static const struct bst_test_instance test_central[] = {
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_collision,
+	},
+	{
+		.test_id = "central_phy",
+		.test_descr = "Central: PHY update while subrated; subrating survives "
+			      "the instant-based procedure.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_phy,
+	},
+	{
+		.test_id = "central_disable",
+		.test_descr = "Central: explicitly disable subrating (N->1); skipping "
+			      "stops.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_disable,
 	},
 	BSTEST_END_MARKER,
 };

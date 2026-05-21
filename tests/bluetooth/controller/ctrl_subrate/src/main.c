@@ -260,6 +260,93 @@ ZTEST(subrate_periph_rem, test_subrate_periph_applies)
 		      llcp_ctx_buffers_free());
 }
 
+/*
+ * Central receives an unacceptable LL_SUBRATE_REQ (Max_Latency exceeds the
+ * acceptable value) and rejects it with LL_REJECT_EXT_IND; subrating is left
+ * unchanged (Core Spec 5.1.20).
+ */
+ZTEST(subrate_central_rem, test_subrate_central_rejects)
+{
+	struct node_tx *tx;
+	struct pdu_data_llctrl_subrate_req in_req_unacceptable = {
+		.subrate_factor_min = SUBRATE_MIN,
+		.subrate_factor_max = SUBRATE_MAX,
+		.max_latency = 5U, /* > acc_max_latency (0) -> not acceptable */
+		.continuation_number = CONT_NUMBER,
+		.timeout = SUBRATE_TO,
+	};
+	struct pdu_data_llctrl_reject_ext_ind reject = {
+		.reject_opcode = PDU_DATA_LLCTRL_TYPE_SUBRATE_REQ,
+		.error_code = BT_HCI_ERR_UNSUPP_LL_PARAM_VAL,
+	};
+
+	test_set_role(&conn, BT_HCI_ROLE_CENTRAL);
+	ull_cp_state_set(&conn, ULL_CP_CONNECTED);
+
+	event_prepare(&conn);
+	lt_tx(LL_SUBRATE_REQ, &conn, &in_req_unacceptable);
+	event_done(&conn);
+
+	event_prepare(&conn);
+	lt_rx(LL_REJECT_EXT_IND, &conn, &tx, &reject);
+	lt_rx_q_is_empty(&conn);
+	event_done(&conn);
+	ull_cp_release_tx(&conn, tx);
+
+	/* No notification, subrating unchanged */
+	ut_rx_q_is_empty();
+	zassert_equal(conn.subrate.factor, 0U, "factor %u", conn.subrate.factor);
+
+	zassert_equal(llcp_ctx_buffers_free(), test_ctx_buffers_cnt(), "Free CTX buffers %d",
+		      llcp_ctx_buffers_free());
+}
+
+/*
+ * Peripheral requests subrating but the Central does not support the feature
+ * and replies LL_UNKNOWN_RSP; the feature is unmasked locally and the change is
+ * reported with BT_HCI_ERR_UNSUPP_REMOTE_FEATURE (5.1.20).
+ */
+ZTEST(subrate_periph_loc, test_subrate_periph_unknown)
+{
+	uint8_t err;
+	struct node_tx *tx;
+	struct node_rx_pdu *ntf;
+	struct pdu_data_llctrl_unknown_rsp unknown = {
+		.type = PDU_DATA_LLCTRL_TYPE_SUBRATE_REQ,
+	};
+	struct node_rx_subrate_change exp_unsupp = {
+		.status = BT_HCI_ERR_UNSUPP_REMOTE_FEATURE,
+		.subrate_factor = 0U,
+		.peripheral_latency = 0U,
+		.continuation_number = 0U,
+		.supervision_timeout = SUPERVISION_TIMEOUT,
+	};
+
+	test_set_role(&conn, BT_HCI_ROLE_PERIPHERAL);
+	ull_cp_state_set(&conn, ULL_CP_CONNECTED);
+
+	err = ull_cp_subrate_req(&conn, SUBRATE_MIN, SUBRATE_MAX, MAX_LATENCY, CONT_NUMBER,
+				 SUBRATE_TO);
+	zassert_equal(err, BT_HCI_ERR_SUCCESS, "err %u", err);
+
+	event_prepare(&conn);
+	lt_rx(LL_SUBRATE_REQ, &conn, &tx, &exp_req);
+	lt_rx_q_is_empty(&conn);
+	event_done(&conn);
+	ull_cp_release_tx(&conn, tx);
+
+	event_prepare(&conn);
+	lt_tx(LL_UNKNOWN_RSP, &conn, &unknown);
+	event_done(&conn);
+
+	ut_rx_node(NODE_SUBRATE_CHANGE, &ntf, &exp_unsupp);
+	ut_rx_q_is_empty();
+
+	release_ntf(ntf);
+	zassert_equal(llcp_ctx_buffers_free(), test_ctx_buffers_cnt(), "Free CTX buffers %d",
+		      llcp_ctx_buffers_free());
+}
+
 ZTEST_SUITE(subrate_central_loc, NULL, NULL, subrate_setup, NULL, NULL);
 ZTEST_SUITE(subrate_periph_loc, NULL, NULL, subrate_setup, NULL, NULL);
 ZTEST_SUITE(subrate_central_rem, NULL, NULL, subrate_setup, NULL, NULL);
