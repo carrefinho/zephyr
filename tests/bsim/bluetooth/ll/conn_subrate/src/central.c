@@ -606,6 +606,102 @@ static void test_central_main_disable(void)
 	bs_trace_silent_exit(0);
 }
 
+/* Notifications-under-subrating: discover HRS, subscribe, and count the
+ * notifications that arrive while subrated (the peripheral can only send them
+ * on subrated/continuation events, so this checks the data-TX path is alive).
+ */
+static struct bt_uuid_16 nfy_uuid = BT_UUID_INIT_16(0);
+static struct bt_gatt_discover_params nfy_disc;
+static struct bt_gatt_subscribe_params nfy_sub;
+static volatile int notify_count;
+static volatile bool subscribed;
+
+static uint8_t notify_cb(struct bt_conn *conn, struct bt_gatt_subscribe_params *params,
+			 const void *data, uint16_t length)
+{
+	if (!data) {
+		return BT_GATT_ITER_STOP;
+	}
+	notify_count++;
+	return BT_GATT_ITER_CONTINUE;
+}
+
+static uint8_t notify_disc_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+			      struct bt_gatt_discover_params *params)
+{
+	int err;
+
+	if (!attr) {
+		return BT_GATT_ITER_STOP;
+	}
+
+	if (!bt_uuid_cmp(nfy_disc.uuid, BT_UUID_HRS)) {
+		memcpy(&nfy_uuid, BT_UUID_HRS_MEASUREMENT, sizeof(nfy_uuid));
+		nfy_disc.uuid = &nfy_uuid.uuid;
+		nfy_disc.start_handle = attr->handle + 1;
+		nfy_disc.type = BT_GATT_DISCOVER_CHARACTERISTIC;
+		(void)bt_gatt_discover(conn, &nfy_disc);
+	} else if (!bt_uuid_cmp(nfy_disc.uuid, BT_UUID_HRS_MEASUREMENT)) {
+		memcpy(&nfy_uuid, BT_UUID_GATT_CCC, sizeof(nfy_uuid));
+		nfy_disc.uuid = &nfy_uuid.uuid;
+		nfy_disc.start_handle = attr->handle + 2;
+		nfy_disc.type = BT_GATT_DISCOVER_DESCRIPTOR;
+		nfy_sub.value_handle = attr->handle + 1;
+		(void)bt_gatt_discover(conn, &nfy_disc);
+	} else {
+		nfy_sub.notify = notify_cb;
+		nfy_sub.value = BT_GATT_CCC_NOTIFY;
+		nfy_sub.ccc_handle = attr->handle;
+		err = bt_gatt_subscribe(conn, &nfy_sub);
+		if (err && err != -EALREADY) {
+			FAIL("Central subscribe failed (err %d)\n", err);
+		} else {
+			subscribed = true;
+		}
+	}
+
+	return BT_GATT_ITER_STOP;
+}
+
+static void test_central_main_notify(void)
+{
+	int before;
+	int err;
+
+	if (central_start()) {
+		return;
+	}
+	SUBRATE_WAIT(default_conn);
+
+	memcpy(&nfy_uuid, BT_UUID_HRS, sizeof(nfy_uuid));
+	nfy_disc.uuid = &nfy_uuid.uuid;
+	nfy_disc.func = notify_disc_cb;
+	nfy_disc.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
+	nfy_disc.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
+	nfy_disc.type = BT_GATT_DISCOVER_PRIMARY;
+	err = bt_gatt_discover(default_conn, &nfy_disc);
+	if (err) {
+		FAIL("Central discover failed (err %d)\n", err);
+		return;
+	}
+
+	SUBRATE_WAIT(subscribed && subrate_factor >= 2U);
+	printk("Central: subscribed, subrating factor %u\n", subrate_factor);
+
+	before = notify_count;
+	k_sleep(K_SECONDS(4));
+	printk("Central: %d notifications under subrating\n", notify_count - before);
+	if ((notify_count - before) < 3) {
+		FAIL("Too few notifications under subrating: %d\n", notify_count - before);
+		return;
+	}
+
+	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	PASS("Central notifications-under-subrating validated (%d in 4 s)\n",
+	     notify_count - before);
+	bs_trace_silent_exit(0);
+}
+
 static void test_central_init(void)
 {
 	bst_ticker_set_next_tick_absolute(WAIT_TIME * 1e6);
@@ -673,6 +769,14 @@ static const struct bst_test_instance test_central[] = {
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_disable,
+	},
+	{
+		.test_id = "central_notify",
+		.test_descr = "Central: subscribe to HRS and verify notifications flow "
+			      "while subrated.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_notify,
 	},
 	BSTEST_END_MARKER,
 };
