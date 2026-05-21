@@ -56,6 +56,7 @@ static volatile uint16_t conn_interval;
 static volatile int read_err;
 static volatile bool collision_mode;
 static volatile bool phy_updated;
+static volatile bool central_connected;
 static K_SEM_DEFINE(read_done, 0, 1);
 
 static uint8_t read_func(struct bt_conn *conn, uint8_t err,
@@ -108,6 +109,7 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 		return;
 	}
 
+	central_connected = true;
 	printk("Central connected\n");
 }
 
@@ -119,6 +121,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 		bt_conn_unref(default_conn);
 		default_conn = NULL;
 	}
+	central_connected = false;
 }
 
 static struct bt_conn_cb conn_callbacks = {
@@ -671,7 +674,7 @@ static void test_central_main_notify(void)
 	if (central_start()) {
 		return;
 	}
-	SUBRATE_WAIT(default_conn);
+	SUBRATE_WAIT(central_connected);
 
 	memcpy(&nfy_uuid, BT_UUID_HRS, sizeof(nfy_uuid));
 	nfy_disc.uuid = &nfy_uuid.uuid;
