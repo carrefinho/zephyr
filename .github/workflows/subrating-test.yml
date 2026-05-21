@@ -113,6 +113,7 @@ jobs:
           echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
 
       - name: Compile subrating bsim scenario
+        shell: bash
         run: |
           export ZEPHYR_BASE="${PWD}"
           source tests/bsim/compile.source
@@ -120,6 +121,7 @@ jobs:
           wait_for_background_jobs
 
       - name: Run subrating bsim scenario
+        shell: bash
         run: |
           export ZEPHYR_BASE="${PWD}"
           export EXECUTE_TIMEOUT=120
