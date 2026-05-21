@@ -127,3 +127,4 @@ jobs:
           export EXECUTE_TIMEOUT=120
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_subrate.sh
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_subrate_transitions.sh
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_subrate_extra.sh
