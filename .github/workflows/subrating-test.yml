@@ -120,9 +120,10 @@ jobs:
           app=tests/bsim/bluetooth/ll/conn_subrate compile
           wait_for_background_jobs
 
-      - name: Run subrating bsim scenario
+      - name: Run subrating bsim scenarios
         shell: bash
         run: |
           export ZEPHYR_BASE="${PWD}"
           export EXECUTE_TIMEOUT=120
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_subrate.sh
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_subrate_transitions.sh
