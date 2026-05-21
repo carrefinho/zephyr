@@ -279,6 +279,11 @@ struct ll_conn {
 		uint16_t base_event;           /* connSubrateBaseEvent */
 		uint16_t continuation_number;  /* connContinuationNumber */
 		uint16_t peripheral_latency;   /* connPeripheralLatency, subrated events */
+		/* Continuation events still to be honoured after a non-empty
+		 * PDU (the connContinuationNumber countdown). Working state for
+		 * the LLL event scheduler, not negotiated.
+		 */
+		uint16_t cont_num_left;
 		/* Host-provided acceptable parameters for peripheral-initiated
 		 * requests, used by a Central to negotiate (5.1.20).
 		 */

@@ -243,17 +243,36 @@ static void subrate_ind_params_calc(struct ll_conn *conn, struct proc_ctx *ctx)
 	ctx->data.subrate.subrate_base_event = subrate_base_event_calc(conn);
 }
 
-/* Store the negotiated subrate parameters on the connection.
- * TODO(subrate-sched): hook factor/base_event/continuation_number into the LLL
- * connection-event scheduler (ull_conn_done / ull_conn_event_counter) so that
- * connection events are actually skipped; until then this only records state.
+/* Store the negotiated subrate parameters on the connection. The peripheral
+ * connection-event scheduler in ull_conn_done() consumes conn->subrate.* to
+ * skip to subrated events (5.1.19/5.1.20 + 4.5.1).
+ * TODO(subrate-sched): Central-side event skipping and subrate transition mode
+ * (listen on old (union) new subrated events until the IND is acked) are not yet
+ * wired; the Central still transmits on every connection event.
  */
 static void subrate_apply(struct ll_conn *conn, struct proc_ctx *ctx)
 {
-	conn->subrate.factor = ctx->data.subrate.subrate_factor;
-	conn->subrate.base_event = ctx->data.subrate.subrate_base_event;
+	uint16_t factor = ctx->data.subrate.subrate_factor;
+	uint16_t base_event = ctx->data.subrate.subrate_base_event;
+
+	/* Normalise connSubrateBaseEvent to the most recent subrated event at or
+	 * before the current event counter, preserving (base mod factor). Any
+	 * value congruent mod factor selects the same set of subrated events, and
+	 * keeping it close to "now" simplifies the scheduler's next-event math.
+	 * (Mirrors NimBLE ble_ll_conn_subrate_set.)
+	 */
+	if (factor > 1U) {
+		int16_t event_diff = (int16_t)(ull_conn_event_counter(conn) - base_event);
+		int16_t subrate_events_diff = event_diff / (int16_t)factor;
+
+		base_event += (uint16_t)(factor * subrate_events_diff);
+	}
+
+	conn->subrate.factor = factor;
+	conn->subrate.base_event = base_event;
 	conn->subrate.continuation_number = ctx->data.subrate.continuation_number;
 	conn->subrate.peripheral_latency = ctx->data.subrate.latency;
+	conn->subrate.cont_num_left = 0U;
 	conn->supervision_timeout = ctx->data.subrate.timeout;
 }
 
