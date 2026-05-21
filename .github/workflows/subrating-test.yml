@@ -112,7 +112,7 @@ jobs:
           west forall -c 'git reset --hard HEAD'
           echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
 
-      - name: Compile subrating bsim scenario
+      - name: Compile subrating bsim scenario (nRF52)
         shell: bash
         run: |
           export ZEPHYR_BASE="${PWD}"
@@ -120,11 +120,29 @@ jobs:
           app=tests/bsim/bluetooth/ll/conn_subrate compile
           wait_for_background_jobs
 
-      - name: Run subrating bsim scenarios
+      - name: Run subrating bsim scenarios (nRF52)
         shell: bash
         run: |
           export ZEPHYR_BASE="${PWD}"
           export EXECUTE_TIMEOUT=120
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_subrate.sh
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_subrate_transitions.sh
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_subrate_extra.sh
+
+      # nRF54L coverage is best-effort: most users run on nRF52, and 4.1's nRF54L
+      # support predates several upstream fixes, so a failure here must not block
+      # the nRF52 gate. Same SoC-independent test sources, built for the nRF54L
+      # board so the nRF54L LLL/radio HAL is exercised.
+      - name: Subrating bsim scenarios (nRF54L, best-effort)
+        continue-on-error: true
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=120
+          export BOARD=nrf54l15bsim/nrf54l15/cpuapp
+          source tests/bsim/compile.source
+          app=tests/bsim/bluetooth/ll/conn_subrate compile
+          wait_for_background_jobs
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_subrate.sh
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_subrate_transitions.sh
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_subrate_extra.sh
