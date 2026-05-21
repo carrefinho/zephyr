@@ -1070,15 +1070,29 @@ static uint16_t conn_subrate_latency_event(struct ll_conn *conn, uint8_t has_non
 	 * the next value, and trx_cnt>0 guarantees it ran.
 	 */
 	uint16_t event = lll->event_counter - 1U;
+	/* Position within the subrate cycle; phase 0 marks a subrated event. Only
+	 * (base_event mod factor) matters, so this stays consistent between Central
+	 * and Peripheral even though each applies the new parameters at a slightly
+	 * different event counter.
+	 */
+	uint16_t phase = (uint16_t)(event - conn->subrate.base_event) % factor;
 	uint16_t next_event;
 	bool next_is_subrated = true;
+
+	/* Re-anchor base_event to the current subrated event. Recomputing it from
+	 * the (shared) event counter and phase every event keeps the two sides in
+	 * step and stops it lagging during a continuation window - otherwise
+	 * base_event + factor could fall at or before the current event and the
+	 * returned skip count would underflow.
+	 */
+	conn->subrate.base_event = event - phase;
 
 	/* Reload the continuation countdown after data activity; clear it on a
 	 * subrated event with no activity so it does not leak across cycles.
 	 */
 	if (has_nonempty_pdu) {
 		conn->subrate.cont_num_left = conn->subrate.continuation_number;
-	} else if (event == conn->subrate.base_event) {
+	} else if (phase == 0U) {
 		conn->subrate.cont_num_left = 0U;
 	}
 
@@ -1088,6 +1102,7 @@ static uint16_t conn_subrate_latency_event(struct ll_conn *conn, uint8_t has_non
 	}
 
 	if (next_is_subrated) {
+		/* Next subrated event strictly after the current one. */
 		next_event = conn->subrate.base_event + factor;
 
 #if defined(CONFIG_BT_PERIPHERAL)
@@ -1103,14 +1118,6 @@ static uint16_t conn_subrate_latency_event(struct ll_conn *conn, uint8_t has_non
 #endif /* CONFIG_BT_PERIPHERAL */
 	} else {
 		next_event = event + 1U;
-	}
-
-	/* Keep base_event anchored to the next subrated event as the counter
-	 * advances (any value congruent mod factor is valid; 4.5.1).
-	 */
-	if (next_is_subrated ||
-	    ((uint16_t)(conn->subrate.base_event + factor) == next_event)) {
-		conn->subrate.base_event = next_event;
 	}
 
 	return (uint16_t)(next_event - event) - 1U;
