@@ -4,11 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Subrating peripheral. Advertise, accept a connection, then initiate a
- * Connection Subrate Request (Core Spec 5.1.20) and confirm the negotiated
- * factor. In the transitions scenario the Central then re-negotiates (M->N)
- * and changes the interval; the peripheral's controller applies those, and the
- * Central drives the assertions. The actual event skipping is observed by the
- * Central (see central.c).
+ * Connection Subrate Request (Core Spec 5.1.20). The Central observes the
+ * resulting event skipping and drives the assertions; the peripheral mostly
+ * negotiates the requested parameters and stays alive.
  */
 #include <zephyr/kernel.h>
 
@@ -46,6 +44,11 @@ extern enum bst_result_t bst_result;
 
 static struct bt_conn *default_conn;
 static volatile bool connected_flag;
+/* In the collision scenario both sides re-negotiate simultaneously; one request
+ * may be rejected (a valid LLCP collision outcome) and the survival check, not
+ * the subrate_changed callback, decides pass/fail.
+ */
+static volatile bool collision_mode;
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -62,13 +65,17 @@ static void subrate_changed(struct bt_conn *conn,
 	       params->supervision_timeout);
 
 	if (params->status != BT_HCI_ERR_SUCCESS) {
+		if (collision_mode) {
+			/* A rejected request is an acceptable collision outcome. */
+			return;
+		}
 		FAIL("Peripheral subrate change failed (status 0x%02x)\n",
 		     params->status);
 		return;
 	}
 
 	/* Negotiation succeeded; the Central validates the resulting skipping. */
-	if (params->factor >= 2U) {
+	if (!collision_mode && params->factor >= 2U) {
 		PASS("Peripheral subrating active (factor %u)\n", params->factor);
 	}
 }
@@ -102,12 +109,8 @@ static struct bt_conn_cb conn_callbacks = {
 	.subrate_changed = subrate_changed,
 };
 
-/* Advertise, then once connected and settled request subrating with the given
- * factor and stay alive responding to whatever the Central drives next.
- */
-static void peripheral_run(uint16_t subrate_min, uint16_t subrate_max)
+static int peripheral_setup(void)
 {
-	bool requested = false;
 	int err;
 
 	bt_conn_cb_register(&conn_callbacks);
@@ -115,7 +118,7 @@ static void peripheral_run(uint16_t subrate_min, uint16_t subrate_max)
 	err = bt_enable(NULL);
 	if (err) {
 		FAIL("Bluetooth init failed (err %d)\n", err);
-		return;
+		return err;
 	}
 
 	printk("Peripheral Bluetooth initialized\n");
@@ -123,44 +126,115 @@ static void peripheral_run(uint16_t subrate_min, uint16_t subrate_max)
 	err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (err) {
 		FAIL("Advertising failed to start (err %d)\n", err);
-		return;
+		return err;
 	}
 
 	printk("Peripheral advertising started\n");
+	return 0;
+}
+
+static int periph_request_subrate(uint16_t subrate_min, uint16_t subrate_max,
+				  uint16_t max_latency, uint16_t cont_number)
+{
+	struct bt_conn_le_subrate_param param = {
+		.subrate_min = subrate_min,
+		.subrate_max = subrate_max,
+		.max_latency = max_latency,
+		.continuation_number = cont_number,
+		.supervision_timeout = SUBRATE_REQ_TIMEOUT,
+	};
+	int err = bt_conn_le_subrate_request(default_conn, &param);
+
+	if (err) {
+		FAIL("Peripheral subrate request failed (err %d)\n", err);
+		return err;
+	}
+	printk("Peripheral requested subrating (min %u max %u lat %u cn %u)\n",
+	       subrate_min, subrate_max, max_latency, cont_number);
+	return 0;
+}
+
+/* Advertise, once connected and settled request subrating with the given
+ * parameters, then stay alive responding to whatever the Central drives next.
+ */
+static void peripheral_run(uint16_t subrate_min, uint16_t subrate_max,
+			   uint16_t max_latency, uint16_t cont_number)
+{
+	bool requested = false;
+
+	if (peripheral_setup()) {
+		return;
+	}
 
 	while (true) {
 		k_sleep(K_MSEC(SETTLE_DELAY_MS));
 
 		if (connected_flag && !requested && default_conn) {
-			struct bt_conn_le_subrate_param param = {
-				.subrate_min = subrate_min,
-				.subrate_max = subrate_max,
-				.max_latency = SUBRATE_REQ_MAX_LATENCY,
-				.continuation_number = SUBRATE_REQ_CONT_NUMBER,
-				.supervision_timeout = SUBRATE_REQ_TIMEOUT,
-			};
-
 			requested = true;
-			err = bt_conn_le_subrate_request(default_conn, &param);
-			if (err) {
-				FAIL("Peripheral subrate request failed (err %d)\n", err);
+			if (periph_request_subrate(subrate_min, subrate_max,
+						   max_latency, cont_number)) {
 				return;
 			}
-			printk("Peripheral requested subrating (min %u max %u)\n",
-			       param.subrate_min, param.subrate_max);
 		}
 	}
 }
 
 static void test_peripheral_main(void)
 {
-	peripheral_run(SUBRATE_REQ_MIN, SUBRATE_REQ_MAX);
+	peripheral_run(SUBRATE_REQ_MIN, SUBRATE_REQ_MAX, 0U, 0U);
 }
 
 static void test_peripheral_main_transitions(void)
 {
 	/* Negotiate exactly factor M; the Central re-negotiates to N afterwards. */
-	peripheral_run(SUBRATE_MTON_M, SUBRATE_MTON_M);
+	peripheral_run(SUBRATE_MTON_M, SUBRATE_MTON_M, 0U, 0U);
+}
+
+static void test_peripheral_main_continuation(void)
+{
+	peripheral_run(SUBRATE_CONT_FACTOR, SUBRATE_CONT_FACTOR, 0U, SUBRATE_CONT_CN);
+}
+
+static void test_peripheral_main_latency(void)
+{
+	peripheral_run(SUBRATE_LAT_FACTOR, SUBRATE_LAT_FACTOR, SUBRATE_LAT_LATENCY, 0U);
+}
+
+static void test_peripheral_main_collision(void)
+{
+	if (peripheral_setup()) {
+		return;
+	}
+
+	while (!connected_flag) {
+		k_sleep(K_MSEC(50));
+		if (bst_result == Failed) {
+			return;
+		}
+	}
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	/* Establish subrating first. */
+	if (periph_request_subrate(SUBRATE_COLL_INITIAL, SUBRATE_COLL_INITIAL, 0U, 0U)) {
+		return;
+	}
+
+	/* Both sides re-negotiate at the same uptime to force an LLCP collision. */
+	while (k_uptime_get() < COLLISION_TIME_MS) {
+		k_sleep(K_MSEC(20));
+	}
+	collision_mode = true;
+	(void)periph_request_subrate(SUBRATE_COLL_PERIPH, SUBRATE_COLL_PERIPH, 0U, 0U);
+
+	/* Survive the collision: still connected a while later. Check before the
+	 * central's end-of-test disconnect (it sleeps longer post-collision).
+	 */
+	k_sleep(K_MSEC(2000));
+	if (!connected_flag) {
+		FAIL("Peripheral lost connection after subrate collision\n");
+		return;
+	}
+	PASS("Peripheral survived subrate collision\n");
 }
 
 static void test_peripheral_init(void)
@@ -179,19 +253,40 @@ static void test_peripheral_tick(bs_time_t HW_device_time)
 static const struct bst_test_instance test_peripheral[] = {
 	{
 		.test_id = "peripheral",
-		.test_descr = "Peripheral: connects, requests subrating (factor > 1) "
-			      "and confirms the negotiated factor.",
+		.test_descr = "Peripheral: requests subrating (factor > 1).",
 		.test_pre_init_f = test_peripheral_init,
 		.test_tick_f = test_peripheral_tick,
 		.test_main_f = test_peripheral_main,
 	},
 	{
 		.test_id = "peripheral_transitions",
-		.test_descr = "Peripheral: negotiates factor M; the Central then "
-			      "re-negotiates to N and changes the interval.",
+		.test_descr = "Peripheral: negotiates factor M; Central re-negotiates "
+			      "to N and changes the interval.",
 		.test_pre_init_f = test_peripheral_init,
 		.test_tick_f = test_peripheral_tick,
 		.test_main_f = test_peripheral_main_transitions,
+	},
+	{
+		.test_id = "peripheral_continuation",
+		.test_descr = "Peripheral: subrating with continuation_number > 0.",
+		.test_pre_init_f = test_peripheral_init,
+		.test_tick_f = test_peripheral_tick,
+		.test_main_f = test_peripheral_main_continuation,
+	},
+	{
+		.test_id = "peripheral_latency",
+		.test_descr = "Peripheral: subrating with peripheral latency > 0.",
+		.test_pre_init_f = test_peripheral_init,
+		.test_tick_f = test_peripheral_tick,
+		.test_main_f = test_peripheral_main_latency,
+	},
+	{
+		.test_id = "peripheral_collision",
+		.test_descr = "Peripheral: re-negotiates subrating simultaneously with "
+			      "the Central (LLCP collision); link must survive.",
+		.test_pre_init_f = test_peripheral_init,
+		.test_tick_f = test_peripheral_tick,
+		.test_main_f = test_peripheral_main_collision,
 	},
 	BSTEST_END_MARKER,
 };

@@ -39,6 +39,28 @@
  */
 #define CONN_UPDATE_INTERVAL_UNITS 36U /* 45 ms */
 
+/* Continuation-events test: factor with a large continuation_number so that,
+ * after data activity, both sides stay present for ~the whole subrate cycle.
+ * Close-spaced reads (< CONT_WINDOW) stay fast; the first idle read is slow.
+ */
+#define SUBRATE_CONT_FACTOR 8U
+#define SUBRATE_CONT_CN     7U  /* factor - 1 */
+#define CONT_READ_GAP_MS    50  /* < CN*interval (210 ms) -> within window */
+#define CONT_IDLE_MS        600 /* > skip period -> peripheral re-skips first */
+
+/* Peripheral-latency test: the Peripheral stacks max_latency on top of the
+ * factor, skipping factor*(latency+1) events while the Central stays on every
+ * factor-th subrated event; they still rendezvous.
+ */
+#define SUBRATE_LAT_FACTOR  4U
+#define SUBRATE_LAT_LATENCY 2U  /* effective skip = 4*(2+1) = 12 events */
+
+/* Collision test: both sides request a subrate change at the same time. */
+#define SUBRATE_COLL_INITIAL 4U /* peripheral negotiates this first */
+#define SUBRATE_COLL_CENTRAL 8U /* central's colliding request */
+#define SUBRATE_COLL_PERIPH  2U /* peripheral's colliding request */
+#define COLLISION_TIME_MS    3000 /* both fire at this uptime */
+
 /* Time the peripheral waits after connecting before requesting subrating, to
  * let feature exchange and the central's discovery complete first.
  */
