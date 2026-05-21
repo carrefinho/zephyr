@@ -33,3 +33,4 @@ run_scenario conn_subrate_latency       peripheral_latency       central_latency
 run_scenario conn_subrate_collision     peripheral_collision     central_collision
 run_scenario conn_subrate_phy           peripheral               central_phy
 run_scenario conn_subrate_disable       peripheral               central_disable
+run_scenario conn_subrate_notify        peripheral_notify        central_notify

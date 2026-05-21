@@ -23,6 +23,7 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/services/hrs.h>
 
 #include "conn_subrate.h"
 
@@ -237,6 +238,38 @@ static void test_peripheral_main_collision(void)
 	PASS("Peripheral survived subrate collision\n");
 }
 
+static void test_peripheral_main_notify(void)
+{
+	uint16_t heartrate = 90U;
+	bool requested = false;
+
+	if (peripheral_setup()) {
+		return;
+	}
+
+	/* Request subrating once connected+settled, then stream HRS notifications.
+	 * Under subrating the controller can only send them on subrated/continuation
+	 * events; the Central verifies they still flow.
+	 */
+	while (true) {
+		k_sleep(K_MSEC(100));
+
+		if (connected_flag && !requested && default_conn) {
+			requested = true;
+			if (periph_request_subrate(SUBRATE_REQ_MIN, SUBRATE_REQ_MAX, 0U, 0U)) {
+				return;
+			}
+		}
+
+		if (connected_flag) {
+			(void)bt_hrs_notify(heartrate);
+			if (++heartrate > 160U) {
+				heartrate = 90U;
+			}
+		}
+	}
+}
+
 static void test_peripheral_init(void)
 {
 	bst_ticker_set_next_tick_absolute(WAIT_TIME * 1e6);
@@ -287,6 +320,13 @@ static const struct bst_test_instance test_peripheral[] = {
 		.test_pre_init_f = test_peripheral_init,
 		.test_tick_f = test_peripheral_tick,
 		.test_main_f = test_peripheral_main_collision,
+	},
+	{
+		.test_id = "peripheral_notify",
+		.test_descr = "Peripheral: streams HRS notifications while subrated.",
+		.test_pre_init_f = test_peripheral_init,
+		.test_tick_f = test_peripheral_tick,
+		.test_main_f = test_peripheral_main_notify,
 	},
 	BSTEST_END_MARKER,
 };
