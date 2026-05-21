@@ -3,10 +3,12 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Subrating peripheral: advertise, accept a connection, then initiate a
+ * Subrating peripheral. Advertise, accept a connection, then initiate a
  * Connection Subrate Request (Core Spec 5.1.20) and confirm the negotiated
- * factor. The actual event skipping it then performs is observed by the
- * central (see central.c).
+ * factor. In the transitions scenario the Central then re-negotiates (M->N)
+ * and changes the interval; the peripheral's controller applies those, and the
+ * Central drives the assertions. The actual event skipping is observed by the
+ * Central (see central.c).
  */
 #include <zephyr/kernel.h>
 
@@ -65,15 +67,10 @@ static void subrate_changed(struct bt_conn *conn,
 		return;
 	}
 
-	if (params->factor < 2U) {
-		FAIL("Peripheral got no subrating (factor %u)\n", params->factor);
-		return;
+	/* Negotiation succeeded; the Central validates the resulting skipping. */
+	if (params->factor >= 2U) {
+		PASS("Peripheral subrating active (factor %u)\n", params->factor);
 	}
-
-	/* Negotiation succeeded with factor > 1; the central validates the
-	 * resulting event skipping.
-	 */
-	PASS("Peripheral subrating active (factor %u)\n", params->factor);
 }
 
 static void connected(struct bt_conn *conn, uint8_t err)
@@ -105,10 +102,13 @@ static struct bt_conn_cb conn_callbacks = {
 	.subrate_changed = subrate_changed,
 };
 
-static void test_peripheral_main(void)
+/* Advertise, then once connected and settled request subrating with the given
+ * factor and stay alive responding to whatever the Central drives next.
+ */
+static void peripheral_run(uint16_t subrate_min, uint16_t subrate_max)
 {
-	int err;
 	bool requested = false;
+	int err;
 
 	bt_conn_cb_register(&conn_callbacks);
 
@@ -131,13 +131,10 @@ static void test_peripheral_main(void)
 	while (true) {
 		k_sleep(K_MSEC(SETTLE_DELAY_MS));
 
-		/* Once connected and settled (feature exchange + the central's
-		 * discovery done), request subrating once.
-		 */
 		if (connected_flag && !requested && default_conn) {
 			struct bt_conn_le_subrate_param param = {
-				.subrate_min = SUBRATE_REQ_MIN,
-				.subrate_max = SUBRATE_REQ_MAX,
+				.subrate_min = subrate_min,
+				.subrate_max = subrate_max,
 				.max_latency = SUBRATE_REQ_MAX_LATENCY,
 				.continuation_number = SUBRATE_REQ_CONT_NUMBER,
 				.supervision_timeout = SUBRATE_REQ_TIMEOUT,
@@ -153,6 +150,17 @@ static void test_peripheral_main(void)
 			       param.subrate_min, param.subrate_max);
 		}
 	}
+}
+
+static void test_peripheral_main(void)
+{
+	peripheral_run(SUBRATE_REQ_MIN, SUBRATE_REQ_MAX);
+}
+
+static void test_peripheral_main_transitions(void)
+{
+	/* Negotiate exactly factor M; the Central re-negotiates to N afterwards. */
+	peripheral_run(SUBRATE_MTON_M, SUBRATE_MTON_M);
 }
 
 static void test_peripheral_init(void)
@@ -171,11 +179,19 @@ static void test_peripheral_tick(bs_time_t HW_device_time)
 static const struct bst_test_instance test_peripheral[] = {
 	{
 		.test_id = "peripheral",
-		.test_descr = "Subrating peripheral: connects, requests subrating "
-			      "(factor > 1) and confirms the negotiated factor.",
+		.test_descr = "Peripheral: connects, requests subrating (factor > 1) "
+			      "and confirms the negotiated factor.",
 		.test_pre_init_f = test_peripheral_init,
 		.test_tick_f = test_peripheral_tick,
 		.test_main_f = test_peripheral_main,
+	},
+	{
+		.test_id = "peripheral_transitions",
+		.test_descr = "Peripheral: negotiates factor M; the Central then "
+			      "re-negotiates to N and changes the interval.",
+		.test_pre_init_f = test_peripheral_init,
+		.test_tick_f = test_peripheral_tick,
+		.test_main_f = test_peripheral_main_transitions,
 	},
 	BSTEST_END_MARKER,
 };
