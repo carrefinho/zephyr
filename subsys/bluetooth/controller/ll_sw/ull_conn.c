@@ -1025,6 +1025,70 @@ int ull_conn_llcp(struct ll_conn *conn, uint32_t ticks_at_expire,
 	return 0;
 }
 
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+/* Peripheral connection-event scheduler for subrating (Core Spec Vol 6, Part B,
+ * 4.5.1). Given the event that just completed, advance the rolling
+ * connSubrateBaseEvent / continuation countdown and return the number of events
+ * to skip (the LLL latency_event; the event counter advances by latency_event+1):
+ *   - present on subrated events, where (event - base) mod factor == 0;
+ *   - connPeripheralLatency stacks by skipping that many *subrated* events;
+ *   - after a non-empty PDU, stay present for connContinuationNumber events.
+ * Ports the peripheral path of NimBLE ble_ll_conn_next_event. Only called in
+ * steady state (no active LLCP procedure), so it never skips past a connection
+ * update instant; the Central is not yet subrating-aware and is present on every
+ * connection event, so any subrated/continuation event woken on is served.
+ */
+static uint16_t conn_subrate_latency_event(struct ll_conn *conn, uint8_t has_nonempty_pdu,
+					   bool have_tx)
+{
+	struct lll_conn *lll = &conn->lll;
+	uint16_t factor = conn->subrate.factor;
+	/* Event that just completed: the LLL prepare incremented event_counter to
+	 * the next value, and trx_cnt>0 guarantees it ran.
+	 */
+	uint16_t event = lll->event_counter - 1U;
+	uint16_t next_event;
+	bool next_is_subrated = true;
+
+	/* Reload the continuation countdown after data activity; clear it on a
+	 * subrated event with no activity so it does not leak across cycles.
+	 */
+	if (has_nonempty_pdu) {
+		conn->subrate.cont_num_left = conn->subrate.continuation_number;
+	} else if (event == conn->subrate.base_event) {
+		conn->subrate.cont_num_left = 0U;
+	}
+
+	if (conn->subrate.cont_num_left > 0U) {
+		conn->subrate.cont_num_left--;
+		next_is_subrated = false;
+	}
+
+	if (next_is_subrated) {
+		next_event = conn->subrate.base_event + factor;
+
+		/* Stack peripheral latency only when idle and enabled, matching the
+		 * non-subrating latency gate.
+		 */
+		if (!have_tx && lll->periph.latency_enabled) {
+			next_event += factor * conn->subrate.peripheral_latency;
+		}
+	} else {
+		next_event = event + 1U;
+	}
+
+	/* Keep base_event anchored to the next subrated event as the counter
+	 * advances (any value congruent mod factor is valid; 4.5.1).
+	 */
+	if (next_is_subrated ||
+	    ((uint16_t)(conn->subrate.base_event + factor) == next_event)) {
+		conn->subrate.base_event = next_event;
+	}
+
+	return (uint16_t)(next_event - event) - 1U;
+}
+#endif /* CONFIG_BT_CTLR_SUBRATING */
+
 void ull_conn_done(struct node_rx_event_done *done)
 {
 	uint32_t ticks_drift_minus;
@@ -1125,6 +1189,8 @@ void ull_conn_done(struct node_rx_event_done *done)
 		if (0) {
 #if defined(CONFIG_BT_PERIPHERAL)
 		} else if (lll->role == BT_HCI_ROLE_PERIPHERAL) {
+			bool have_tx;
+
 			if (!conn->periph.drift_skip) {
 				ull_drift_ticks_get(done, &ticks_drift_plus,
 						    &ticks_drift_minus);
@@ -1141,9 +1207,23 @@ void ull_conn_done(struct node_rx_event_done *done)
 				ull_conn_tx_demux(UINT8_MAX);
 			}
 
-			if (ull_tx_q_peek(&conn->tx_q) ||
-			    memq_peek(lll->memq_tx.head,
-				      lll->memq_tx.tail, NULL)) {
+			have_tx = ull_tx_q_peek(&conn->tx_q) ||
+				  memq_peek(lll->memq_tx.head,
+					    lll->memq_tx.tail, NULL);
+
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+			/* Subrated event skipping only in steady state: while an
+			 * LLCP procedure is pending or running, fall back to the
+			 * standard latency path so a connection update instant is
+			 * never skipped past.
+			 */
+			if ((conn->subrate.factor > 1U) &&
+			    !llcp_lr_peek(conn) && !llcp_rr_peek(conn)) {
+				lll->latency_event = conn_subrate_latency_event(
+					conn, done->extra.has_nonempty_pdu, have_tx);
+			} else
+#endif /* CONFIG_BT_CTLR_SUBRATING */
+			if (have_tx) {
 				lll->latency_event = 0U;
 			} else if (lll->periph.latency_enabled) {
 				lll->latency_event = lll->latency;
@@ -2457,6 +2537,21 @@ void ull_conn_update_parameters(struct ll_conn *conn, uint8_t is_cu_proc, uint8_
 		LL_ASSERT(0);
 		break;
 	}
+
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+	/* A connection interval change invalidates the negotiated subrating: its
+	 * supervision-timeout/skip bound was validated against the old interval.
+	 * Reset to factor 1 (no subrating); the Host can re-negotiate. (Mirrors
+	 * NimBLE, which clears subrating when the interval changes.)
+	 */
+	if (lll->interval != interval) {
+		conn->subrate.factor = 1U;
+		conn->subrate.base_event = 0U;
+		conn->subrate.continuation_number = 0U;
+		conn->subrate.peripheral_latency = 0U;
+		conn->subrate.cont_num_left = 0U;
+	}
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 
 	lll->interval = interval;
 	lll->latency = latency;
