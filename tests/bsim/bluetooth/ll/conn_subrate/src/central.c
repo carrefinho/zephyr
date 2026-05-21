@@ -257,7 +257,7 @@ static int central_start(void)
 /* Wait for a condition with the WAIT_TIME tick as the backstop, bailing on
  * an already-failed result.
  */
-#define WAIT_FOR(_cond)							\
+#define SUBRATE_WAIT(_cond)							\
 	do {								\
 		while (!(_cond)) {					\
 			k_sleep(K_MSEC(100));				\
@@ -283,7 +283,7 @@ static void test_central_main(void)
 	}
 
 	/* Wait for the link and a negotiated factor > 1. */
-	WAIT_FOR(default_conn && subrate_factor >= 2U);
+	SUBRATE_WAIT(default_conn && subrate_factor >= 2U);
 
 	interval_ms = interval_to_ms(CONN_INTERVAL_UNITS);
 	threshold_ms = (subrate_factor * interval_ms) / 2U;
@@ -328,7 +328,7 @@ static void test_central_main_transitions(void)
 	}
 
 	/* Peripheral negotiates factor M first. */
-	WAIT_FOR(default_conn && subrate_factor == SUBRATE_MTON_M);
+	SUBRATE_WAIT(default_conn && subrate_factor == SUBRATE_MTON_M);
 	printk("Central: peripheral negotiated M=%u\n", subrate_factor);
 
 	/* M->N: Central re-negotiates to factor N (central-initiated, 5.1.19). */
@@ -337,7 +337,7 @@ static void test_central_main_transitions(void)
 		FAIL("Central M->N subrate request failed (err %d)\n", err);
 		return;
 	}
-	WAIT_FOR(subrate_factor == SUBRATE_MTON_N);
+	SUBRATE_WAIT(subrate_factor == SUBRATE_MTON_N);
 	printk("Central: transitioned to N=%u\n", subrate_factor);
 
 	/* Both should now skip at factor N. */
@@ -365,7 +365,7 @@ static void test_central_main_transitions(void)
 		FAIL("Central conn param update failed (err %d)\n", err);
 		return;
 	}
-	WAIT_FOR(conn_interval == CONN_UPDATE_INTERVAL_UNITS);
+	SUBRATE_WAIT(conn_interval == CONN_UPDATE_INTERVAL_UNITS);
 	printk("Central: interval updated to %u units while subrated\n", conn_interval);
 
 	/* Subrating must have reset to factor 1 -> no more skipping -> low latency. */
