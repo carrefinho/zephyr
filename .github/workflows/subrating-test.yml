@@ -73,3 +73,54 @@ jobs:
             twister-out/**/build.log
             twister-out/**/handler.log
           if-no-files-found: ignore
+
+  # BabbleSim radio-level validation of the Phase 2 peripheral event-skipping.
+  # The CI image ships a pre-built BabbleSim at /opt/bsim, so we only compile the
+  # subrating scenario and run it (no in-workspace babblesim modules needed).
+  ctrl-subrate-bsim:
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/zephyrproject-rtos/ci-repo-cache:v0.27.4.20241026
+      options: "--entrypoint /bin/bash"
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+      BSIM_OUT_PATH: /opt/bsim/
+      BSIM_COMPONENTS_PATH: /opt/bsim/components
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Clone cached Zephyr repository (speeds up checkout/update)
+        continue-on-error: true
+        run: |
+          git clone --shared /repo-cache/zephyrproject/zephyr .
+          git remote set-url origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: West init + update
+        run: |
+          west init -l . || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update --path-cache /repo-cache/zephyrproject 1> west.update.log 2>&1 \
+            || west update 1> west.update.log 2>&1
+          west forall -c 'git reset --hard HEAD'
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
+
+      - name: Compile subrating bsim scenario
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+          app=tests/bsim/bluetooth/ll/conn_subrate compile
+          wait_for_background_jobs
+
+      - name: Run subrating bsim scenario
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=120
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_subrate.sh
