@@ -49,10 +49,8 @@ extern enum bst_result_t bst_result;
 	} while (0)
 
 static struct bt_conn *default_conn;
-static struct bt_gatt_discover_params discover_params;
 static struct bt_gatt_read_params read_params;
 
-static volatile uint16_t name_value_handle;
 static volatile uint16_t subrate_factor;
 static volatile int read_err;
 static K_SEM_DEFINE(read_done, 0, 1);
@@ -63,22 +61,6 @@ static uint8_t read_func(struct bt_conn *conn, uint8_t err,
 {
 	read_err = err;
 	k_sem_give(&read_done);
-	return BT_GATT_ITER_STOP;
-}
-
-static uint8_t discover_func(struct bt_conn *conn,
-			     const struct bt_gatt_attr *attr,
-			     struct bt_gatt_discover_params *params)
-{
-	if (!attr) {
-		printk("Central discovery complete\n");
-		return BT_GATT_ITER_STOP;
-	}
-
-	name_value_handle = bt_gatt_attr_value_handle(attr);
-	printk("Central found device-name char, value handle %u\n",
-	       name_value_handle);
-
 	return BT_GATT_ITER_STOP;
 }
 
@@ -101,25 +83,12 @@ static void subrate_changed(struct bt_conn *conn,
 
 static void connected(struct bt_conn *conn, uint8_t conn_err)
 {
-	int err;
-
 	if (conn_err) {
 		FAIL("Central failed to connect (err 0x%02x)\n", conn_err);
 		return;
 	}
 
 	printk("Central connected\n");
-
-	discover_params.uuid = BT_UUID_GAP_DEVICE_NAME;
-	discover_params.func = discover_func;
-	discover_params.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
-	discover_params.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
-	discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
-
-	err = bt_gatt_discover(conn, &discover_params);
-	if (err) {
-		FAIL("Central discover failed (err %d)\n", err);
-	}
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -174,16 +143,21 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 	}
 }
 
-/* Probe with a single read and return the round-trip latency in ms, or -1. */
+/* Probe with a single Read-By-UUID of the GAP Device Name (always present and
+ * readable) and return the round-trip latency in ms, or -1 on failure.
+ */
 static int64_t probe_read_latency(void)
 {
 	int64_t t0;
 	int err;
 
 	read_params.func = read_func;
-	read_params.handle_count = 1;
-	read_params.single.handle = name_value_handle;
-	read_params.single.offset = 0;
+	read_params.handle_count = 0;
+	read_params.by_uuid.uuid = BT_UUID_GAP_DEVICE_NAME;
+	read_params.by_uuid.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
+	read_params.by_uuid.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
+
+	read_err = 0;
 
 	t0 = k_uptime_get();
 	err = bt_gatt_read(default_conn, &read_params);
@@ -243,10 +217,8 @@ static void test_central_main(void)
 		return;
 	}
 
-	/* Wait until the link is up, the device-name handle is discovered and
-	 * subrating has been negotiated with factor > 1.
-	 */
-	while (!default_conn || !name_value_handle || subrate_factor < 2U) {
+	/* Wait until the link is up and subrating has been negotiated (factor>1). */
+	while (!default_conn || subrate_factor < 2U) {
 		k_sleep(K_MSEC(100));
 
 		if (bst_result == Failed) {
