@@ -1026,17 +1026,17 @@ int ull_conn_llcp(struct ll_conn *conn, uint32_t ticks_at_expire,
 }
 
 #if defined(CONFIG_BT_CTLR_SUBRATING)
-/* Peripheral connection-event scheduler for subrating (Core Spec Vol 6, Part B,
- * 4.5.1). Given the event that just completed, advance the rolling
- * connSubrateBaseEvent / continuation countdown and return the number of events
- * to skip (the LLL latency_event; the event counter advances by latency_event+1):
+/* Connection-event scheduler for subrating (Core Spec Vol 6, Part B, 4.5.1).
+ * Given the event that just completed, advance the rolling connSubrateBaseEvent
+ * / continuation countdown and return the number of events to skip (the LLL
+ * latency_event; the event counter advances by latency_event+1):
  *   - present on subrated events, where (event - base) mod factor == 0;
- *   - connPeripheralLatency stacks by skipping that many *subrated* events;
+ *   - the Peripheral additionally skips connPeripheralLatency subrated events
+ *     when idle (the Central must stay present on every subrated event);
  *   - after a non-empty PDU, stay present for connContinuationNumber events.
- * Ports the peripheral path of NimBLE ble_ll_conn_next_event. Only called in
- * steady state (no active LLCP procedure), so it never skips past a connection
- * update instant; the Central is not yet subrating-aware and is present on every
- * connection event, so any subrated/continuation event woken on is served.
+ * Ports NimBLE ble_ll_conn_next_event for both roles. Only called in steady
+ * state (no active LLCP procedure), so it never skips past a connection update
+ * instant.
  */
 static uint16_t conn_subrate_latency_event(struct ll_conn *conn, uint8_t has_nonempty_pdu,
 					   bool have_tx)
@@ -1067,12 +1067,17 @@ static uint16_t conn_subrate_latency_event(struct ll_conn *conn, uint8_t has_non
 	if (next_is_subrated) {
 		next_event = conn->subrate.base_event + factor;
 
-		/* Stack peripheral latency only when idle and enabled, matching the
-		 * non-subrating latency gate.
+#if defined(CONFIG_BT_PERIPHERAL)
+		/* Peripheral latency stacks only on the Peripheral, when idle:
+		 * skip connPeripheralLatency additional subrated events. The
+		 * Central stays present on every subrated event so the Peripheral
+		 * can always reach it.
 		 */
-		if (!have_tx && lll->periph.latency_enabled) {
+		if ((lll->role == BT_HCI_ROLE_PERIPHERAL) && !have_tx &&
+		    lll->periph.latency_enabled) {
 			next_event += factor * conn->subrate.peripheral_latency;
 		}
+#endif /* CONFIG_BT_PERIPHERAL */
 	} else {
 		next_event = event + 1U;
 	}
@@ -1229,6 +1234,23 @@ void ull_conn_done(struct node_rx_event_done *done)
 				lll->latency_event = lll->latency;
 			}
 #endif /* CONFIG_BT_PERIPHERAL */
+#if defined(CONFIG_BT_CENTRAL) && defined(CONFIG_BT_CTLR_SUBRATING)
+		} else if (lll->role == BT_HCI_ROLE_CENTRAL) {
+			/* Central-side subrated event skipping (Phase 3). Steady
+			 * state only, so a connection update instant is never
+			 * skipped past. The Central stays present on every subrated
+			 * event (the helper applies no peripheral-latency stacking
+			 * for the Central role). When not subrating, fall back to
+			 * presence on every event (latency_event 0).
+			 */
+			if ((conn->subrate.factor > 1U) &&
+			    !llcp_lr_peek(conn) && !llcp_rr_peek(conn)) {
+				lll->latency_event = conn_subrate_latency_event(
+					conn, done->extra.has_nonempty_pdu, false);
+			} else {
+				lll->latency_event = 0U;
+			}
+#endif /* CONFIG_BT_CENTRAL && CONFIG_BT_CTLR_SUBRATING */
 		}
 
 		/* Reset connection failed to establish countdown */
