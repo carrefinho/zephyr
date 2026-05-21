@@ -27,6 +27,18 @@
 /* Central acceptable subrate defaults (must allow the request above). */
 #define SUBRATE_ACC_MAX 8U
 
+/* M->N transition test: the Peripheral first negotiates SUBRATE_MTON_M, then the
+ * Central re-negotiates to SUBRATE_MTON_N (both > 1 -> a true M->N transition).
+ */
+#define SUBRATE_MTON_M 4U
+#define SUBRATE_MTON_N 8U
+
+/* conn-update test: the Central changes the interval while subrated, which must
+ * reset subrating to factor 1. A different value from CONN_INTERVAL_UNITS so the
+ * interval actually changes.
+ */
+#define CONN_UPDATE_INTERVAL_UNITS 36U /* 45 ms */
+
 /* Time the peripheral waits after connecting before requesting subrating, to
  * let feature exchange and the central's discovery complete first.
  */

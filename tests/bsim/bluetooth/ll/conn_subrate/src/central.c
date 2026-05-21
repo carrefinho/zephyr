@@ -3,14 +3,19 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Subrating central: connect to the peripheral at a fixed interval, let the
- * peripheral negotiate subrating (factor > 1), then probe the link with timed
- * GATT reads while the peripheral is idle. Because a subrated peripheral only
- * listens on subrated events, a read issued while it sleeps is answered only
- * after it next wakes, so the observed read latency reveals the skip cadence:
- * latencies far above one connection interval prove the peripheral skipped
- * events. The central itself (not yet subrating-aware) is present on every
- * event, so this isolates the peripheral skipping (Phase 2).
+ * Subrating central. Two scenarios:
+ *   "central"             - let the peripheral negotiate subrating (factor > 1)
+ *                           and verify via timed GATT reads that the peripheral
+ *                           skips connection events (Phase 2 / 3a).
+ *   "central_transitions" - peripheral negotiates factor M, central re-negotiates
+ *                           to factor N (M->N transition), verify both re-skip at
+ *                           N; then change the connection interval while subrated
+ *                           and verify subrating resets to factor 1 (gate handles
+ *                           the update, no crash, both present every event).
+ *
+ * A subrated peer only listens on subrated events, so a read issued while it
+ * sleeps is answered only after the next subrated event: large read latency
+ * proves skipping, small latency proves no skipping.
  */
 #include <zephyr/kernel.h>
 
@@ -52,6 +57,7 @@ static struct bt_conn *default_conn;
 static struct bt_gatt_read_params read_params;
 
 static volatile uint16_t subrate_factor;
+static volatile uint16_t conn_interval;
 static volatile int read_err;
 static K_SEM_DEFINE(read_done, 0, 1);
 
@@ -81,6 +87,14 @@ static void subrate_changed(struct bt_conn *conn,
 	subrate_factor = params->factor;
 }
 
+static void le_param_updated(struct bt_conn *conn, uint16_t interval,
+			     uint16_t latency, uint16_t timeout)
+{
+	printk("Central conn params updated: interval %u latency %u timeout %u\n",
+	       interval, latency, timeout);
+	conn_interval = interval;
+}
+
 static void connected(struct bt_conn *conn, uint8_t conn_err)
 {
 	if (conn_err) {
@@ -105,6 +119,7 @@ static struct bt_conn_cb conn_callbacks = {
 	.connected = connected,
 	.disconnected = disconnected,
 	.subrate_changed = subrate_changed,
+	.le_param_updated = le_param_updated,
 };
 
 static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
@@ -179,7 +194,30 @@ static int64_t probe_read_latency(void)
 	return k_uptime_get() - t0;
 }
 
-static void test_central_main(void)
+/* Run `count` probes spaced by READ_GAP_MS and return the worst-case latency,
+ * or -1 on failure. The gap exceeds the skip period so the peripheral has gone
+ * back to sleep before each probe.
+ */
+static int64_t probe_max_latency(int count)
+{
+	int64_t max_latency = 0;
+
+	for (int i = 0; i < count; i++) {
+		int64_t latency = probe_read_latency();
+
+		if (latency < 0) {
+			return -1;
+		}
+
+		printk("Central read %d latency %lld ms\n", i, latency);
+		max_latency = MAX(max_latency, latency);
+		k_sleep(K_MSEC(READ_GAP_MS));
+	}
+
+	return max_latency;
+}
+
+static int central_start(void)
 {
 	struct bt_conn_le_subrate_param defaults = {
 		.subrate_min = 1U,
@@ -188,10 +226,6 @@ static void test_central_main(void)
 		.continuation_number = 0U,
 		.supervision_timeout = CONN_TIMEOUT_UNITS,
 	};
-	struct bt_conn_info info;
-	int64_t max_latency = 0;
-	uint32_t interval_ms;
-	uint32_t threshold_ms;
 	int err;
 
 	bt_conn_cb_register(&conn_callbacks);
@@ -199,76 +233,155 @@ static void test_central_main(void)
 	err = bt_enable(NULL);
 	if (err) {
 		FAIL("Bluetooth init failed (err %d)\n", err);
-		return;
+		return err;
 	}
 
 	printk("Central Bluetooth initialized\n");
 
-	/* Allow the peripheral's request to be granted with a large factor. */
+	/* Allow the peripheral's requests to be granted with a large factor. */
 	err = bt_conn_le_subrate_set_defaults(&defaults);
 	if (err) {
 		FAIL("Set default subrate failed (err %d)\n", err);
-		return;
+		return err;
 	}
 
 	err = bt_le_scan_start(BT_LE_SCAN_ACTIVE, device_found);
 	if (err) {
 		FAIL("Scanning failed to start (err %d)\n", err);
+		return err;
+	}
+
+	return 0;
+}
+
+/* Wait for a condition with the WAIT_TIME tick as the backstop, bailing on
+ * an already-failed result.
+ */
+#define WAIT_FOR(_cond)							\
+	do {								\
+		while (!(_cond)) {					\
+			k_sleep(K_MSEC(100));				\
+			if (bst_result == Failed) {			\
+				return;					\
+			}						\
+		}							\
+	} while (0)
+
+static uint32_t interval_to_ms(uint16_t units)
+{
+	return (units * 5U) / 4U; /* 1.25 ms units -> ms */
+}
+
+static void test_central_main(void)
+{
+	int64_t max_latency;
+	uint32_t interval_ms;
+	uint32_t threshold_ms;
+
+	if (central_start()) {
 		return;
 	}
 
-	/* Wait until the link is up and subrating has been negotiated (factor>1). */
-	while (!default_conn || subrate_factor < 2U) {
-		k_sleep(K_MSEC(100));
+	/* Wait for the link and a negotiated factor > 1. */
+	WAIT_FOR(default_conn && subrate_factor >= 2U);
 
-		if (bst_result == Failed) {
-			return;
-		}
-	}
-
-	err = bt_conn_get_info(default_conn, &info);
-	if (err) {
-		FAIL("Central conn info failed (err %d)\n", err);
-		return;
-	}
-	interval_ms = (info.le.interval * 5U) / 4U; /* 1.25 ms units -> ms */
-
-	/* A subrated, idle peripheral listens once every (factor * interval); a
-	 * probe issued while it sleeps waits up to that long. Require the worst
-	 * observed latency to clear half the skip period - unreachable unless
-	 * the peripheral actually skipped events.
-	 */
+	interval_ms = interval_to_ms(CONN_INTERVAL_UNITS);
 	threshold_ms = (subrate_factor * interval_ms) / 2U;
-
 	printk("Central probing: factor %u, interval %u ms, threshold %u ms\n",
 	       subrate_factor, interval_ms, threshold_ms);
 
-	for (int i = 0; i < NUM_READS; i++) {
-		int64_t latency = probe_read_latency();
-
-		if (latency < 0) {
-			return; /* FAIL already set */
-		}
-
-		printk("Central read %d latency %lld ms\n", i, latency);
-		max_latency = MAX(max_latency, latency);
-
-		/* Let the peripheral go back to sleep before the next probe. */
-		k_sleep(K_MSEC(READ_GAP_MS));
+	max_latency = probe_max_latency(NUM_READS);
+	if (max_latency < 0) {
+		return;
 	}
 
 	printk("Central max read latency %lld ms (threshold %u ms)\n",
 	       max_latency, threshold_ms);
-
 	if (max_latency < threshold_ms) {
-		FAIL("Peripheral did not skip events: max read latency %lld ms "
-		     "below threshold %u ms\n", max_latency, threshold_ms);
+		FAIL("Peripheral did not skip events: max latency %lld ms < %u ms\n",
+		     max_latency, threshold_ms);
 		return;
 	}
 
 	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
 	PASS("Central observed subrating skip (factor %u, max latency %lld ms)\n",
 	     subrate_factor, max_latency);
+	bs_trace_silent_exit(0);
+}
+
+static void test_central_main_transitions(void)
+{
+	struct bt_conn_le_subrate_param to_n = {
+		.subrate_min = 1U,
+		.subrate_max = SUBRATE_MTON_N,
+		.max_latency = 0U,
+		.continuation_number = 0U,
+		.supervision_timeout = CONN_TIMEOUT_UNITS,
+	};
+	struct bt_le_conn_param *upd;
+	uint32_t interval_ms;
+	int64_t max_latency;
+	int err;
+
+	if (central_start()) {
+		return;
+	}
+
+	/* Peripheral negotiates factor M first. */
+	WAIT_FOR(default_conn && subrate_factor == SUBRATE_MTON_M);
+	printk("Central: peripheral negotiated M=%u\n", subrate_factor);
+
+	/* M->N: Central re-negotiates to factor N (central-initiated, 5.1.19). */
+	err = bt_conn_le_subrate_request(default_conn, &to_n);
+	if (err) {
+		FAIL("Central M->N subrate request failed (err %d)\n", err);
+		return;
+	}
+	WAIT_FOR(subrate_factor == SUBRATE_MTON_N);
+	printk("Central: transitioned to N=%u\n", subrate_factor);
+
+	/* Both should now skip at factor N. */
+	interval_ms = interval_to_ms(CONN_INTERVAL_UNITS);
+	max_latency = probe_max_latency(NUM_READS);
+	if (max_latency < 0) {
+		return;
+	}
+	printk("Central post-M->N max latency %lld ms\n", max_latency);
+	if (max_latency < (SUBRATE_MTON_N * interval_ms) / 2U) {
+		FAIL("No skip after M->N: max latency %lld ms\n", max_latency);
+		return;
+	}
+
+	/* conn-update while subrated: change the interval, which resets subrating
+	 * to factor 1. Validates that the procedure completes (gate keeps both
+	 * present every event, #51 prevents the latency_upd crash) and that the
+	 * link survives.
+	 */
+	conn_interval = 0U;
+	upd = BT_LE_CONN_PARAM(CONN_UPDATE_INTERVAL_UNITS, CONN_UPDATE_INTERVAL_UNITS,
+			       0, CONN_TIMEOUT_UNITS);
+	err = bt_conn_le_param_update(default_conn, upd);
+	if (err) {
+		FAIL("Central conn param update failed (err %d)\n", err);
+		return;
+	}
+	WAIT_FOR(conn_interval == CONN_UPDATE_INTERVAL_UNITS);
+	printk("Central: interval updated to %u units while subrated\n", conn_interval);
+
+	/* Subrating must have reset to factor 1 -> no more skipping -> low latency. */
+	max_latency = probe_max_latency(NUM_READS / 2);
+	if (max_latency < 0) {
+		return;
+	}
+	printk("Central post-update max latency %lld ms\n", max_latency);
+	if (max_latency >= (SUBRATE_MTON_N * interval_to_ms(CONN_UPDATE_INTERVAL_UNITS)) / 2U) {
+		FAIL("Subrating not reset after interval change: max latency %lld ms\n",
+		     max_latency);
+		return;
+	}
+
+	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	PASS("Central M->N + conn-update validated\n");
 	bs_trace_silent_exit(0);
 }
 
@@ -288,12 +401,19 @@ static void test_central_tick(bs_time_t HW_device_time)
 static const struct bst_test_instance test_central[] = {
 	{
 		.test_id = "central",
-		.test_descr = "Subrating central: connects, lets the peripheral "
-			      "negotiate subrating, and verifies via timed reads "
-			      "that the peripheral skips connection events.",
+		.test_descr = "Central: peripheral negotiates subrating; verify the "
+			      "peripheral skips connection events via timed reads.",
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main,
+	},
+	{
+		.test_id = "central_transitions",
+		.test_descr = "Central: M->N subrate transition then a conn-param "
+			      "interval change while subrated (resets to factor 1).",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_transitions,
 	},
 	BSTEST_END_MARKER,
 };
