@@ -68,6 +68,15 @@ static void subrate_setup(void *data)
 	lll->event_counter = 0U;
 	conn.supervision_timeout = SUPERVISION_TIMEOUT;
 
+	/* test_setup() does not clear subrating working state; reset it so each
+	 * test starts unsubrated (the static conn is reused across the suite).
+	 */
+	conn.subrate.factor = 0U;
+	conn.subrate.base_event = 0U;
+	conn.subrate.continuation_number = 0U;
+	conn.subrate.peripheral_latency = 0U;
+	conn.subrate.cont_num_left = 0U;
+
 	/* Allow a Central to grant subrate factors > 1 to a Peripheral request. */
 	conn.subrate.acc_factor_min = 1U;
 	conn.subrate.acc_factor_max = 16U;
