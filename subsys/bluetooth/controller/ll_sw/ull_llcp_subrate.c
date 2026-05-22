@@ -653,7 +653,14 @@ static void rp_subrate_st_wait_rx_subrate_req(struct ll_conn *conn, struct proc_
 	switch (evt) {
 	case RP_SUBRATE_EVT_SUBRATE_REQ:
 		llcp_pdu_decode_subrate_req(ctx, (struct pdu_data *)param);
-		if (subrate_req_negotiate(conn, ctx)) {
+		if (!(ll_feat_get() & BIT64(BT_LE_FEAT_BIT_CONN_SUBRATING_HOST_SUPP))) {
+			/* Core Spec 5.1.20: the Central shall reject a Peripheral
+			 * request if its own Host has not set the Connection Subrating
+			 * (Host Support) feature bit.
+			 */
+			ctx->data.subrate.error = BT_HCI_ERR_UNSUPP_REMOTE_FEATURE;
+			rp_subrate_send_reject_ext_ind(conn, ctx);
+		} else if (subrate_req_negotiate(conn, ctx)) {
 			rp_subrate_send_subrate_ind(conn, ctx);
 		} else {
 			ctx->data.subrate.error = BT_HCI_ERR_UNSUPP_LL_PARAM_VAL;
