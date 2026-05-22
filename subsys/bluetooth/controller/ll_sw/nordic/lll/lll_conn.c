@@ -451,9 +451,6 @@ void lll_conn_isr_rx(void *param)
 	is_empty_pdu_tx_retry = lll->empty;
 	lll_conn_pdu_tx_prep(lll, &pdu_data_tx);
 
-	/* Non-empty Tx keeps the subrating continuation window open */
-	SUBRATE_NONEMPTY_PDU_SET(pdu_data_tx->len);
-
 #if defined(CONFIG_BT_CTLR_DF_CONN_CTE_TX)
 	if (pdu_data_tx->cp) {
 		cte_len = CTE_LEN_US(pdu_data_tx->octet3.cte_info.time);
@@ -1042,6 +1039,12 @@ void lll_conn_pdu_tx_prep(struct lll_conn *lll, struct pdu_data **pdu_data_tx)
 #endif /* !CONFIG_BT_CTLR_DF_CONN_CTE_TX && !CONFIG_BT_CTLR_DF_CONN_CTE_RX */
 #endif /* CONFIG_BT_CTLR_DATA_LENGTH_CLEAR */
 	}
+
+	/* A non-empty Tx keeps the subrating continuation window open. Done here
+	 * (the shared Tx-prep) so the Central's first PDU prepared in
+	 * lll_central_prepare is counted too, not only the Tx prepared in isr_rx.
+	 */
+	SUBRATE_NONEMPTY_PDU_SET(p->len);
 
 	*pdu_data_tx = p;
 }
