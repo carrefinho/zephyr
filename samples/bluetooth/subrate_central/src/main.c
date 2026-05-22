@@ -6,13 +6,16 @@
  * LE Connection Subrating - central demo for two nRF54L15 DKs.
  *
  * Scans for the subrate_peripheral sample, connects at a fixed connection
- * interval, then each press of Button 1 cycles the subrate factor through
- * active / idle / dormant tiers (1 / 8 / 33) using a central-initiated
- * Connection Subrate Update (Core Spec, Vol 6, Part B, 5.1.19). Measure the
- * board current at each tier to observe the central-side power saving.
+ * interval, then automatically cycles the subrate factor through active / idle /
+ * dormant tiers (1 / 8 / 33) on a fixed dwell timer using central-initiated
+ * Connection Subrate Updates (Core Spec, Vol 6, Part B, 5.1.19).
  *
- * The LED is left off while idle so it does not perturb a current measurement;
- * it blinks (tier-index times) only when a new factor is applied.
+ * It runs autonomously - no button - so you can flash, reset, and observe the
+ * result over RTT (logging is routed to SEGGER RTT) and measure the board
+ * current at each tier. A heartbeat line confirms the link survives each tier
+ * (factor 33 sits just under the supervision-timeout bound). The LED blinks the
+ * tier index when a factor is applied, then stays off so it does not perturb a
+ * current measurement.
  */
 #include <string.h>
 
@@ -30,18 +33,22 @@
 #define CONN_INTERVAL 24U  /* 30 ms (1.25 ms units) */
 #define CONN_TIMEOUT  200U /* 2 s (10 ms units) */
 
+/* Hold each factor this long (long enough for a current reading) before
+ * advancing to the next tier.
+ */
+#define TIER_DWELL_MS 10000
+#define HEARTBEAT_MS  2000
+
 /* active / idle / dormant subrate factors (1 = subrating off). */
 static const uint16_t tiers[] = {1U, 8U, 33U};
 static size_t tier_idx;
 
 static struct bt_conn *default_conn;
+static volatile uint16_t applied_factor;
+static volatile int64_t last_change_ms;
 
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
-static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios);
-static struct gpio_callback button_cb_data;
-static volatile bool button_pressed;
 static volatile int pending_blink;
-static int64_t last_press_ms;
 
 static void blink(int times)
 {
@@ -51,14 +58,6 @@ static void blink(int times)
 		(void)gpio_pin_set_dt(&led, 0);
 		k_sleep(K_MSEC(120));
 	}
-}
-
-static void button_isr(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
-{
-	ARG_UNUSED(dev);
-	ARG_UNUSED(cb);
-	ARG_UNUSED(pins);
-	button_pressed = true;
 }
 
 static bool name_match(struct bt_data *data, void *user_data)
@@ -116,7 +115,10 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	}
 
 	tier_idx = 0U;
-	printk("Connected. Press Button 1 to cycle subrate factor (1 / 8 / 33).\n");
+	applied_factor = 1U;
+	last_change_ms = k_uptime_get();
+	printk("[%lld] Connected; auto-cycling factor (1/8/33) every %d ms\n",
+	       last_change_ms, TIER_DWELL_MS);
 	pending_blink = 1;
 }
 
@@ -124,7 +126,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	ARG_UNUSED(conn);
 
-	printk("Disconnected (reason 0x%02x); scanning again\n", reason);
+	printk("[%lld] Disconnected (reason 0x%02x); scanning again\n", k_uptime_get(), reason);
 	if (default_conn) {
 		bt_conn_unref(default_conn);
 		default_conn = NULL;
@@ -138,11 +140,14 @@ static void subrate_changed(struct bt_conn *conn,
 	ARG_UNUSED(conn);
 
 	if (params->status != BT_HCI_ERR_SUCCESS) {
-		printk("Subrate change failed (status 0x%02x)\n", params->status);
+		printk("[%lld] Subrate change failed (status 0x%02x)\n",
+		       k_uptime_get(), params->status);
 		return;
 	}
-	printk("Subrate factor now %u (continuation %u, peripheral latency %u)\n",
-	       params->factor, params->continuation_number, params->peripheral_latency);
+	applied_factor = params->factor;
+	printk("[%lld] Subrate factor now %u (continuation %u, peripheral latency %u)\n",
+	       k_uptime_get(), params->factor, params->continuation_number,
+	       params->peripheral_latency);
 	pending_blink = (int)tier_idx + 1;
 }
 
@@ -154,17 +159,14 @@ BT_CONN_CB_DEFINE(conn_cb) = {
 
 int main(void)
 {
+	int64_t next_beat_ms = 0;
 	int err;
 
-	if (!gpio_is_ready_dt(&led) || !gpio_is_ready_dt(&button)) {
-		printk("GPIO not ready\n");
+	if (!gpio_is_ready_dt(&led)) {
+		printk("LED not ready\n");
 		return 0;
 	}
 	(void)gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
-	(void)gpio_pin_configure_dt(&button, GPIO_INPUT);
-	(void)gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_TO_ACTIVE);
-	gpio_init_callback(&button_cb_data, button_isr, BIT(button.pin));
-	(void)gpio_add_callback(button.port, &button_cb_data);
 
 	err = bt_enable(NULL);
 	if (err) {
@@ -180,46 +182,44 @@ int main(void)
 	}
 
 	while (1) {
+		int64_t now = k_uptime_get();
+
 		if (pending_blink) {
 			int n = pending_blink;
 
 			pending_blink = 0;
 			blink(n);
+			now = k_uptime_get();
 		}
 
-		if (button_pressed) {
-			int64_t now = k_uptime_get();
+		if (default_conn) {
+			if (now - last_change_ms >= TIER_DWELL_MS) {
+				last_change_ms = now;
+				tier_idx = (tier_idx + 1U) % ARRAY_SIZE(tiers);
 
-			button_pressed = false;
+				struct bt_conn_le_subrate_param param = {
+					.subrate_min = tiers[tier_idx],
+					.subrate_max = tiers[tier_idx],
+					.max_latency = 0U,
+					.continuation_number = 0U,
+					.supervision_timeout = CONN_TIMEOUT,
+				};
 
-			if (now - last_press_ms < 300) {
-				continue; /* debounce */
+				printk("[%lld] Requesting subrate factor %u\n", now, tiers[tier_idx]);
+				err = bt_conn_le_subrate_request(default_conn, &param);
+				if (err) {
+					printk("[%lld] Subrate request (factor %u) failed (err %d)\n",
+					       now, tiers[tier_idx], err);
+				}
 			}
-			last_press_ms = now;
 
-			if (!default_conn) {
-				continue;
-			}
-
-			tier_idx = (tier_idx + 1U) % ARRAY_SIZE(tiers);
-
-			struct bt_conn_le_subrate_param param = {
-				.subrate_min = tiers[tier_idx],
-				.subrate_max = tiers[tier_idx],
-				.max_latency = 0U,
-				.continuation_number = 0U,
-				.supervision_timeout = CONN_TIMEOUT,
-			};
-
-			err = bt_conn_le_subrate_request(default_conn, &param);
-			if (err) {
-				printk("Subrate request (factor %u) failed (err %d)\n",
-				       tiers[tier_idx], err);
-			} else {
-				printk("Requested subrate factor %u\n", tiers[tier_idx]);
+			if (now >= next_beat_ms) {
+				next_beat_ms = now + HEARTBEAT_MS;
+				printk("[%lld] alive, factor %u\n", now, applied_factor);
 			}
 		}
-		k_sleep(K_MSEC(50));
+
+		k_sleep(K_MSEC(100));
 	}
 
 	return 0;

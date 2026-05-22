@@ -28,5 +28,6 @@ Building and Running
    west build -b nrf54l15dk/nrf54l15/cpuapp samples/bluetooth/subrate_peripheral
    west flash
 
-The central drives the factor; this side's serial log reports each applied
-factor via ``Subrate factor now N``.
+The central drives the factor; view this side's VCOM serial port at 115200 baud
+(any serial terminal) for each applied factor (``Subrate factor now N``) and the
+``alive, factor N`` heartbeat confirming the link survives each tier.
