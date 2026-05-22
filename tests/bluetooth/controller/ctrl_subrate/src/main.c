@@ -83,6 +83,11 @@ static void subrate_setup(void *data)
 	conn.subrate.acc_max_latency = 0U;
 	conn.subrate.acc_continuation_number = 0U;
 	conn.subrate.acc_supervision_timeout = 0x0C80U;
+
+	/* The Central accepts Peripheral requests only if its own Host has enabled
+	 * Connection Subrating (5.1.20); set it so the accept-path tests run.
+	 */
+	ll_set_host_feature(BT_LE_FEAT_BIT_CONN_SUBRATING_HOST_SUPP, 1U);
 }
 
 /* Expected LL_SUBRATE_REQ emitted by a Peripheral initiator */
@@ -305,6 +310,40 @@ ZTEST(subrate_central_rem, test_subrate_central_rejects)
 	/* No notification, subrating unchanged */
 	ut_rx_q_is_empty();
 	zassert_equal(conn.subrate.factor, 0U, "factor %u", conn.subrate.factor);
+
+	zassert_equal(llcp_ctx_buffers_free(), test_ctx_buffers_cnt(), "Free CTX buffers %d",
+		      llcp_ctx_buffers_free());
+}
+
+/*
+ * A Central whose own Host has not set the Connection Subrating (Host Support)
+ * feature bit rejects an otherwise-acceptable Peripheral request (5.1.20).
+ */
+ZTEST(subrate_central_rem, test_subrate_central_no_host_support)
+{
+	struct node_tx *tx;
+	struct pdu_data_llctrl_reject_ext_ind reject = {
+		.reject_opcode = PDU_DATA_LLCTRL_TYPE_SUBRATE_REQ,
+		.error_code = BT_HCI_ERR_UNSUPP_REMOTE_FEATURE,
+	};
+
+	/* Clear the local Host Support bit that subrate_setup enables. */
+	ll_set_host_feature(BT_LE_FEAT_BIT_CONN_SUBRATING_HOST_SUPP, 0U);
+
+	test_set_role(&conn, BT_HCI_ROLE_CENTRAL);
+	ull_cp_state_set(&conn, ULL_CP_CONNECTED);
+
+	event_prepare(&conn);
+	lt_tx(LL_SUBRATE_REQ, &conn, &in_req);
+	event_done(&conn);
+
+	event_prepare(&conn);
+	lt_rx(LL_REJECT_EXT_IND, &conn, &tx, &reject);
+	lt_rx_q_is_empty(&conn);
+	event_done(&conn);
+	ull_cp_release_tx(&conn, tx);
+
+	ut_rx_q_is_empty();
 
 	zassert_equal(llcp_ctx_buffers_free(), test_ctx_buffers_cnt(), "Free CTX buffers %d",
 		      llcp_ctx_buffers_free());
