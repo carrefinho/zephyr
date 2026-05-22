@@ -201,6 +201,11 @@ static void test_peripheral_main_oddfactor(void)
 	peripheral_run(SUBRATE_ODD_FACTOR, SUBRATE_ODD_FACTOR, 0U, 0U);
 }
 
+static void test_peripheral_main_supervision(void)
+{
+	peripheral_run(SUBRATE_SUPERVISION_FACTOR, SUBRATE_SUPERVISION_FACTOR, 0U, 0U);
+}
+
 static void test_peripheral_main_latency(void)
 {
 	peripheral_run(SUBRATE_LAT_FACTOR, SUBRATE_LAT_FACTOR, SUBRATE_LAT_LATENCY, 0U);
@@ -339,6 +344,13 @@ static const struct bst_test_instance test_peripheral[] = {
 		.test_pre_init_f = test_peripheral_init,
 		.test_tick_f = test_peripheral_tick,
 		.test_main_f = test_peripheral_main_oddfactor,
+	},
+	{
+		.test_id = "peripheral_supervision",
+		.test_descr = "Peripheral: large factor near the supervision-timeout bound.",
+		.test_pre_init_f = test_peripheral_init,
+		.test_tick_f = test_peripheral_tick,
+		.test_main_f = test_peripheral_main_supervision,
 	},
 	BSTEST_END_MARKER,
 };

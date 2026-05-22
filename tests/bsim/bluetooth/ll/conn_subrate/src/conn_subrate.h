@@ -39,6 +39,13 @@
  */
 #define SUBRATE_ODD_FACTOR 5U
 
+/* Supervision-timeout boundary: the largest factor the HCI bound allows here
+ * (interval[1.25ms]*factor*(lat+1) < 2x supervision: 24*33 = 792 < 800). Its
+ * skip period (~990 ms) is just under half the 2 s supervision timeout, so an
+ * idle link survives only if the peripheral keeps listening on subrated events.
+ */
+#define SUBRATE_SUPERVISION_FACTOR 33U
+
 /* conn-update test: the Central changes the interval while subrated, which must
  * reset subrating to factor 1. A different value from CONN_INTERVAL_UNITS so the
  * interval actually changes.
