@@ -1073,9 +1073,15 @@ static uint16_t conn_subrate_latency_event(struct ll_conn *conn, uint8_t has_non
 	/* Position within the subrate cycle; phase 0 marks a subrated event. Only
 	 * (base_event mod factor) matters, so this stays consistent between Central
 	 * and Peripheral even though each applies the new parameters at a slightly
-	 * different event counter.
+	 * different event counter. Use the signed event distance so the phase is
+	 * correct even when base_event is still ahead of the counter (subrate_apply
+	 * seeds it a few events in the future) or the 16-bit counter has wrapped - a
+	 * plain unsigned (event - base) % factor is only right when factor divides
+	 * 65536 (i.e. powers of two).
 	 */
-	uint16_t phase = (uint16_t)(event - conn->subrate.base_event) % factor;
+	int16_t event_diff = (int16_t)(event - conn->subrate.base_event);
+	uint16_t phase = (uint16_t)(((event_diff % (int16_t)factor) + (int16_t)factor) %
+				    (int16_t)factor);
 	uint16_t next_event;
 	bool next_is_subrated = true;
 
