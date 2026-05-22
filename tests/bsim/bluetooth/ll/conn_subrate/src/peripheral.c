@@ -257,7 +257,7 @@ static void test_peripheral_main_notify(void)
 	 * events; the Central verifies they still flow.
 	 */
 	while (true) {
-		k_sleep(K_MSEC(100));
+		k_sleep(K_MSEC(SUBRATE_NOTIFY_PERIOD_MS));
 
 		if (connected_flag && !requested && default_conn) {
 			requested = true;

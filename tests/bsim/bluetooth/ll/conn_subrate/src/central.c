@@ -304,6 +304,14 @@ static void test_central_main(void)
 		     mx, threshold_ms);
 		return;
 	}
+	/* ...but not far beyond the negotiated cadence: a Central that over-skips
+	 * (wrong factor/phase) would push the latency well past factor*interval.
+	 */
+	if (mx > 2U * subrate_factor * interval_ms) {
+		FAIL("Skip exceeds negotiated factor %u cadence: max %lld ms > %u ms\n",
+		     subrate_factor, mx, 2U * subrate_factor * interval_ms);
+		return;
+	}
 
 	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
 	PASS("Central observed subrating skip (factor %u, max latency %lld ms)\n",
@@ -419,20 +427,49 @@ static void test_central_main_continuation(void)
 	}
 
 	/* Close-spaced reads stay within the continuation window: each read's data
-	 * keeps both sides awake, so subsequent reads are answered immediately.
+	 * reloads the window, so reads are answered immediately. Count reads that
+	 * fall outside the window - tolerate one boundary slip but catch a window
+	 * that is systematically broken (asserting only the min would hide that).
 	 */
-	if (probe_minmax(NUM_READS, CONT_READ_GAP_MS, &cont_min, &cont_max)) {
+	int slow = 0;
+
+	cont_min = -1;
+	cont_max = 0;
+	for (int i = 0; i < NUM_READS; i++) {
+		int64_t lat = probe_read_latency();
+
+		if (lat < 0) {
+			return;
+		}
+		printk("Central continuation burst read %d latency %lld ms\n", i, lat);
+		if (cont_min < 0 || lat < cont_min) {
+			cont_min = lat;
+		}
+		if (lat > cont_max) {
+			cont_max = lat;
+		}
+		if (lat > 2 * (int64_t)interval_ms) {
+			slow++;
+		}
+		if (i < NUM_READS - 1) {
+			k_sleep(K_MSEC(CONT_READ_GAP_MS));
+		}
+	}
+	printk("Central continuation burst: min %lld max %lld, %d slow of %d\n",
+	       cont_min, cont_max, slow, NUM_READS);
+	if (cont_min > 2 * interval_ms) {
+		FAIL("Continuation did not keep link awake: min %lld ms\n", cont_min);
 		return;
 	}
-	printk("Central continuation burst min %lld ms\n", cont_min);
-	if (cont_min > 2U * interval_ms) {
-		FAIL("Continuation did not keep link awake: min %lld ms\n", cont_min);
+	if (slow > 2) {
+		FAIL("Continuation window broke repeatedly: %d slow reads of %d\n",
+		     slow, NUM_READS);
 		return;
 	}
 
 	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-	PASS("Central continuation validated (idle %lld ms, burst %lld ms)\n",
-	     idle_max, cont_min);
+	PASS("Central continuation validated (idle %lld ms, burst min %lld max %lld)\n",
+	     idle_max, cont_min, cont_max);
 	bs_trace_silent_exit(0);
 }
 
@@ -464,9 +501,18 @@ static void test_central_main_latency(void)
 		     mx, (effective * interval_ms) / 2U);
 		return;
 	}
+	/* ...and every read, not just the worst sample, must reach into the stacked
+	 * cadence - a peripheral that ignored max_latency would top out near
+	 * factor*interval on every read.
+	 */
+	if (mn < (effective * interval_ms) / 2U) {
+		FAIL("Peripheral latency not consistently stacked: min %lld ms < %u ms\n",
+		     mn, (effective * interval_ms) / 2U);
+		return;
+	}
 
 	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-	PASS("Central peripheral-latency validated (max latency %lld ms)\n", mx);
+	PASS("Central peripheral-latency validated (min %lld max %lld ms)\n", mn, mx);
 	bs_trace_silent_exit(0);
 }
 
@@ -479,7 +525,8 @@ static void test_central_main_collision(void)
 		.continuation_number = 0U,
 		.supervision_timeout = CONN_TIMEOUT_UNITS,
 	};
-	int64_t latency;
+	int64_t cmn, cmx;
+	uint32_t civ;
 
 	if (central_start()) {
 		return;
@@ -497,20 +544,30 @@ static void test_central_main_collision(void)
 	collision_mode = true;
 	(void)bt_conn_le_subrate_request(default_conn, &to_central);
 
-	/* Let the collision resolve, then confirm the link is still functional. */
+	/* Let the collision resolve, then confirm the link is still functional and
+	 * both sides converged: probe several times (a desync would drop the link
+	 * or stall a read) and, if still subrated, check the skip cadence matches
+	 * the Central's final factor. Subrate collisions have no spec-defined
+	 * winner (no instant), so only agreement - not a particular factor - holds.
+	 */
 	k_sleep(K_MSEC(3000));
 	if (!default_conn) {
 		FAIL("Central lost connection after subrate collision\n");
 		return;
 	}
-	latency = probe_read_latency();
-	if (latency < 0) {
+	civ = interval_to_ms(CONN_INTERVAL_UNITS);
+	if (probe_minmax(NUM_READS / 2, READ_GAP_MS, &cmn, &cmx)) {
+		return;
+	}
+	if (subrate_factor >= 2U && cmx < (subrate_factor * civ) / 2U) {
+		FAIL("Post-collision skip inconsistent with factor %u: max %lld ms\n",
+		     subrate_factor, cmx);
 		return;
 	}
 
 	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-	PASS("Central survived subrate collision (final factor %u, read %lld ms)\n",
-	     subrate_factor, latency);
+	PASS("Central survived subrate collision (final factor %u, max %lld ms)\n",
+	     subrate_factor, cmx);
 	bs_trace_silent_exit(0);
 }
 
@@ -694,7 +751,11 @@ static void test_central_main_notify(void)
 	before = notify_count;
 	k_sleep(K_SECONDS(4));
 	printk("Central: %d notifications under subrating\n", notify_count - before);
-	if ((notify_count - before) < 3) {
+	/* The peripheral notifies every SUBRATE_NOTIFY_PERIOD_MS (> the skip period),
+	 * so ~4000/period are expected; each is queued during a skip and must wake
+	 * the peripheral on a subrated event. Require most of them to arrive.
+	 */
+	if ((notify_count - before) < (4000 / SUBRATE_NOTIFY_PERIOD_MS) - 3) {
 		FAIL("Too few notifications under subrating: %d\n", notify_count - before);
 		return;
 	}
