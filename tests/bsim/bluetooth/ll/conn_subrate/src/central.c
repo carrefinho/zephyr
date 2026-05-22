@@ -766,6 +766,48 @@ static void test_central_main_notify(void)
 	bs_trace_silent_exit(0);
 }
 
+static void test_central_main_supervision(void)
+{
+	struct bt_conn_le_subrate_param hi = {
+		.subrate_min = 1U,
+		.subrate_max = SUBRATE_SUPERVISION_FACTOR,
+		.max_latency = 0U,
+		.continuation_number = 0U,
+		.supervision_timeout = CONN_TIMEOUT_UNITS,
+	};
+	int64_t lat;
+
+	if (central_start()) {
+		return;
+	}
+	/* Raise the acceptable factor ceiling so the large request is granted. */
+	(void)bt_conn_le_subrate_set_defaults(&hi);
+
+	SUBRATE_WAIT(default_conn && subrate_factor == SUBRATE_SUPERVISION_FACTOR);
+	printk("Central: factor %u, skip ~%u ms, supervision %u ms\n", subrate_factor,
+	       subrate_factor * interval_to_ms(CONN_INTERVAL_UNITS), CONN_TIMEOUT_UNITS * 10U);
+
+	/* Idle for many skip cycles with no data: the link survives only if the
+	 * peripheral keeps listening on subrated events within the supervision
+	 * timeout - a too-long skip would drop the link.
+	 */
+	k_sleep(K_SECONDS(10));
+	if (!default_conn) {
+		FAIL("Link dropped while idle-subrated near the supervision bound\n");
+		return;
+	}
+	/* And it is still functional. */
+	lat = probe_read_latency();
+	if (lat < 0) {
+		return;
+	}
+
+	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	PASS("Central supervision-boundary validated (factor %u survived 10 s idle)\n",
+	     subrate_factor);
+	bs_trace_silent_exit(0);
+}
+
 static void test_central_init(void)
 {
 	bst_ticker_set_next_tick_absolute(WAIT_TIME * 1e6);
@@ -841,6 +883,14 @@ static const struct bst_test_instance test_central[] = {
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_notify,
+	},
+	{
+		.test_id = "central_supervision",
+		.test_descr = "Central: large factor near the supervision-timeout bound; "
+			      "idle link must survive.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_supervision,
 	},
 	BSTEST_END_MARKER,
 };
