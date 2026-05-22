@@ -33,6 +33,12 @@
 #define SUBRATE_MTON_M 4U
 #define SUBRATE_MTON_N 8U
 
+/* Non-power-of-2 factor: the subrated-event phase math must be correct when the
+ * factor does not divide the 16-bit event counter (an unsigned (event - base) %
+ * factor mis-anchors for these). Reuses the basic `central` skip probe.
+ */
+#define SUBRATE_ODD_FACTOR 5U
+
 /* conn-update test: the Central changes the interval while subrated, which must
  * reset subrating to factor 1. A different value from CONN_INTERVAL_UNITS so the
  * interval actually changes.

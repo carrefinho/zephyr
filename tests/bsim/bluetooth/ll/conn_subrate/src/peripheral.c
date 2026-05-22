@@ -196,6 +196,11 @@ static void test_peripheral_main_continuation(void)
 	peripheral_run(SUBRATE_CONT_FACTOR, SUBRATE_CONT_FACTOR, 0U, SUBRATE_CONT_CN);
 }
 
+static void test_peripheral_main_oddfactor(void)
+{
+	peripheral_run(SUBRATE_ODD_FACTOR, SUBRATE_ODD_FACTOR, 0U, 0U);
+}
+
 static void test_peripheral_main_latency(void)
 {
 	peripheral_run(SUBRATE_LAT_FACTOR, SUBRATE_LAT_FACTOR, SUBRATE_LAT_LATENCY, 0U);
@@ -327,6 +332,13 @@ static const struct bst_test_instance test_peripheral[] = {
 		.test_pre_init_f = test_peripheral_init,
 		.test_tick_f = test_peripheral_tick,
 		.test_main_f = test_peripheral_main_notify,
+	},
+	{
+		.test_id = "peripheral_oddfactor",
+		.test_descr = "Peripheral: negotiates a non-power-of-2 factor (5).",
+		.test_pre_init_f = test_peripheral_init,
+		.test_tick_f = test_peripheral_tick,
+		.test_main_f = test_peripheral_main_oddfactor,
 	},
 	BSTEST_END_MARKER,
 };
