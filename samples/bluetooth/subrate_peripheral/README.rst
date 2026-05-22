@@ -1,0 +1,32 @@
+.. _ble_subrate_peripheral:
+
+Bluetooth: LE Connection Subrating Peripheral
+#############################################
+
+Overview
+********
+
+Companion to the :ref:`ble_subrate_central` sample. It advertises as
+``subrate_demo`` and accepts a connection from the central, which drives the
+subrate factor (Core Spec, Vol 6, Part B, section 5.1.19). The peripheral applies
+each negotiated factor and skips connection events accordingly; it logs the
+applied factor and blinks the LED, which is otherwise off so it does not perturb
+a current measurement (the peripheral saves power too).
+
+Requirements
+************
+
+* Two boards running the Zephyr LL_SW controller with
+  ``CONFIG_BT_CTLR_SUBRATING`` (e.g. two nRF54L15 DKs): one running this sample,
+  the other running :ref:`ble_subrate_central`.
+
+Building and Running
+********************
+
+.. code-block:: console
+
+   west build -b nrf54l15dk/nrf54l15/cpuapp samples/bluetooth/subrate_peripheral
+   west flash
+
+The central drives the factor; this side's serial log reports each applied
+factor via ``Subrate factor now N``.
