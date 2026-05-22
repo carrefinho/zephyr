@@ -156,7 +156,7 @@ static uint16_t subrate_base_event_calc(struct ll_conn *conn)
  * the LL_SUBRATE_IND. Core Spec Vol 6, Part B, Section 5.1.20.
  * Returns true if the request is acceptable.
  */
-static bool subrate_req_negotiate(struct ll_conn *conn, struct proc_ctx *ctx)
+__maybe_unused static bool subrate_req_negotiate(struct ll_conn *conn, struct proc_ctx *ctx)
 {
 	const uint16_t req_min = ctx->data.subrate.subrate_factor_min;
 	const uint16_t req_max = ctx->data.subrate.subrate_factor_max;
@@ -220,7 +220,7 @@ static bool subrate_req_negotiate(struct ll_conn *conn, struct proc_ctx *ctx)
  * validated ranges and the latency/timeout relationship; pick the largest
  * acceptable subrate factor for maximum power saving.
  */
-static void subrate_ind_params_calc(struct ll_conn *conn, struct proc_ctx *ctx)
+__maybe_unused static void subrate_ind_params_calc(struct ll_conn *conn, struct proc_ctx *ctx)
 {
 	uint16_t factor = ctx->data.subrate.subrate_factor_max;
 	uint16_t latency = ctx->data.subrate.max_latency;
@@ -578,7 +578,7 @@ void llcp_lp_subrate_run(struct ll_conn *conn, struct proc_ctx *ctx, void *param
  * LLCP Remote Procedure Subrate FSM
  */
 
-static void rp_subrate_tx(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t opcode)
+__maybe_unused static void rp_subrate_tx(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t opcode)
 {
 	struct node_tx *tx;
 	struct pdu_data *pdu;
