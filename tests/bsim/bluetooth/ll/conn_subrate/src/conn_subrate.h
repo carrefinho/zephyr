@@ -67,6 +67,13 @@
 #define SUBRATE_COLL_PERIPH  2U /* peripheral's colliding request */
 #define COLLISION_TIME_MS    3000 /* both fire at this uptime */
 
+/* Notifications-under-subrating: notify slower than the skip period (factor *
+ * interval = 240 ms at factor 8) so each notification is queued during a skip
+ * and must wake the peripheral on a subrated event to be delivered - rather
+ * than a fast stream that keeps the link awake and never really subrates.
+ */
+#define SUBRATE_NOTIFY_PERIOD_MS 400
+
 /* Time the peripheral waits after connecting before requesting subrating, to
  * let feature exchange and the central's discovery complete first.
  */
