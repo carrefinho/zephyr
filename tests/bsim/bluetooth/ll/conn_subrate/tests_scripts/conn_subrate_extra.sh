@@ -36,3 +36,4 @@ run_scenario conn_subrate_disable       peripheral               central_disable
 run_scenario conn_subrate_notify        peripheral_notify        central_notify
 run_scenario conn_subrate_oddfactor     peripheral_oddfactor     central
 run_scenario conn_subrate_supervision   peripheral_supervision   central_supervision
+run_scenario conn_subrate_cwrite        peripheral_cwrite        central_cwrite

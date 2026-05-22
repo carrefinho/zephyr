@@ -808,6 +808,77 @@ static void test_central_main_supervision(void)
 	bs_trace_silent_exit(0);
 }
 
+/* Central->Peripheral continuation: discover the write-without-response
+ * characteristic and burst data to it (one write per connection event).
+ */
+static struct bt_uuid_128 cw_uuid;
+static struct bt_gatt_discover_params cw_disc;
+static volatile uint16_t cwrite_handle;
+
+static uint8_t cwrite_disc_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+			      struct bt_gatt_discover_params *params)
+{
+	ARG_UNUSED(conn);
+	ARG_UNUSED(params);
+	if (!attr) {
+		return BT_GATT_ITER_STOP;
+	}
+	cwrite_handle = bt_gatt_attr_value_handle(attr);
+	return BT_GATT_ITER_STOP;
+}
+
+static void test_central_main_cwrite(void)
+{
+	uint8_t val = 0;
+	uint32_t period_ms;
+	int64_t end;
+	int err;
+
+	if (central_start()) {
+		return;
+	}
+	SUBRATE_WAIT(central_connected && subrate_factor == SUBRATE_CONT_FACTOR);
+
+	memcpy(&cw_uuid, BT_UUID_DECLARE_128(CWRITE_CHR_UUID), sizeof(cw_uuid));
+	cw_disc.uuid = &cw_uuid.uuid;
+	cw_disc.func = cwrite_disc_cb;
+	cw_disc.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
+	cw_disc.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
+	cw_disc.type = BT_GATT_DISCOVER_CHARACTERISTIC;
+	err = bt_gatt_discover(default_conn, &cw_disc);
+	if (err) {
+		FAIL("Central discover (cwrite) failed (err %d)\n", err);
+		return;
+	}
+	SUBRATE_WAIT(cwrite_handle != 0U);
+	printk("Central: bursting writes to handle %u\n", cwrite_handle);
+
+	/* One write per connection event for several seconds. If the Central's own
+	 * Tx opens the continuation window the writes go out at the event rate;
+	 * otherwise they are throttled to the subrate cadence.
+	 */
+	period_ms = interval_to_ms(CONN_INTERVAL_UNITS);
+	end = k_uptime_get() + 6000;
+	while (k_uptime_get() < end) {
+		err = bt_gatt_write_without_response(default_conn, cwrite_handle, &val,
+						     sizeof(val), false);
+		if (err == -ENOMEM) {
+			k_sleep(K_MSEC(period_ms));
+			continue;
+		}
+		if (err) {
+			FAIL("Central write-without-response failed (err %d)\n", err);
+			return;
+		}
+		val++;
+		k_sleep(K_MSEC(period_ms));
+	}
+
+	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	PASS("Central C->P continuation burst sent\n");
+	bs_trace_silent_exit(0);
+}
+
 static void test_central_init(void)
 {
 	bst_ticker_set_next_tick_absolute(WAIT_TIME * 1e6);
@@ -891,6 +962,14 @@ static const struct bst_test_instance test_central[] = {
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_supervision,
+	},
+	{
+		.test_id = "central_cwrite",
+		.test_descr = "Central: bursts write-without-response to the peripheral "
+			      "under continuation.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_cwrite,
 	},
 	BSTEST_END_MARKER,
 };
