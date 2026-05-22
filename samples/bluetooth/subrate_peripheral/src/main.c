@@ -18,8 +18,12 @@
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/hci.h>
 
+#define HEARTBEAT_MS 2000
+
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static volatile int pending_blink;
+static volatile bool is_connected;
+static volatile uint16_t applied_factor = 1U;
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -53,7 +57,9 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		printk("Failed to connect (err 0x%02x)\n", err);
 		return;
 	}
-	printk("Connected to central\n");
+	printk("[%lld] Connected to central\n", k_uptime_get());
+	applied_factor = 1U;
+	is_connected = true;
 	pending_blink = 1;
 }
 
@@ -61,7 +67,8 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	ARG_UNUSED(conn);
 
-	printk("Disconnected (reason 0x%02x); advertising again\n", reason);
+	printk("[%lld] Disconnected (reason 0x%02x); advertising again\n", k_uptime_get(), reason);
+	is_connected = false;
 	start_adv();
 }
 
@@ -74,8 +81,10 @@ static void subrate_changed(struct bt_conn *conn,
 		printk("Subrate change failed (status 0x%02x)\n", params->status);
 		return;
 	}
-	printk("Subrate factor now %u (continuation %u, peripheral latency %u)\n",
-	       params->factor, params->continuation_number, params->peripheral_latency);
+	applied_factor = params->factor;
+	printk("[%lld] Subrate factor now %u (continuation %u, peripheral latency %u)\n",
+	       k_uptime_get(), params->factor, params->continuation_number,
+	       params->peripheral_latency);
 	pending_blink = 1;
 }
 
@@ -104,13 +113,24 @@ int main(void)
 
 	start_adv();
 
+	int64_t next_beat_ms = 0;
+
 	while (1) {
+		int64_t now = k_uptime_get();
+
 		if (pending_blink) {
 			int n = pending_blink;
 
 			pending_blink = 0;
 			blink(n);
+			now = k_uptime_get();
 		}
+
+		if (is_connected && now >= next_beat_ms) {
+			next_beat_ms = now + HEARTBEAT_MS;
+			printk("[%lld] alive, factor %u\n", now, applied_factor);
+		}
+
 		k_sleep(K_MSEC(50));
 	}
 
