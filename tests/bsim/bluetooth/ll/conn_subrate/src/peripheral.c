@@ -23,6 +23,8 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/services/hrs.h>
 
 #include "conn_subrate.h"
@@ -56,6 +58,29 @@ static const struct bt_data ad[] = {
 	BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME,
 		sizeof(CONFIG_BT_DEVICE_NAME) - 1),
 };
+
+/* Write-without-response characteristic for the central->peripheral
+ * continuation test; each write the Central sends increments the counter.
+ */
+static volatile int cwrite_count;
+
+static ssize_t cwrite_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+			 const void *buf, uint16_t len, uint16_t offset, uint8_t flags)
+{
+	ARG_UNUSED(conn);
+	ARG_UNUSED(attr);
+	ARG_UNUSED(buf);
+	ARG_UNUSED(offset);
+	ARG_UNUSED(flags);
+	cwrite_count++;
+	return len;
+}
+
+BT_GATT_SERVICE_DEFINE(cwrite_svc,
+	BT_GATT_PRIMARY_SERVICE(BT_UUID_DECLARE_128(CWRITE_SVC_UUID)),
+	BT_GATT_CHARACTERISTIC(BT_UUID_DECLARE_128(CWRITE_CHR_UUID),
+			       BT_GATT_CHRC_WRITE_WITHOUT_RESP, BT_GATT_PERM_WRITE,
+			       NULL, cwrite_cb, NULL));
 
 static void subrate_changed(struct bt_conn *conn,
 			    const struct bt_conn_le_subrate_changed *params)
@@ -206,6 +231,48 @@ static void test_peripheral_main_supervision(void)
 	peripheral_run(SUBRATE_SUPERVISION_FACTOR, SUBRATE_SUPERVISION_FACTOR, 0U, 0U);
 }
 
+static void test_peripheral_main_cwrite(void)
+{
+	int before;
+
+	if (peripheral_setup()) {
+		return;
+	}
+
+	while (!connected_flag) {
+		k_sleep(K_MSEC(50));
+		if (bst_result == Failed) {
+			return;
+		}
+	}
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	/* Subrate with continuation enabled, then count the Central's bursts. */
+	if (periph_request_subrate(SUBRATE_CONT_FACTOR, SUBRATE_CONT_FACTOR, 0U,
+				   SUBRATE_CONT_CN)) {
+		return;
+	}
+
+	/* Let the Central discover the characteristic and start writing. */
+	k_sleep(K_SECONDS(2));
+	before = cwrite_count;
+	k_sleep(K_SECONDS(3));
+	printk("Peripheral received %d central writes under subrating\n",
+	       cwrite_count - before);
+
+	/* With the Central's own Tx opening the continuation window the burst
+	 * arrives near the event rate (~100 in 3 s); throttled to the subrate
+	 * cadence it would be ~factor times fewer (~12). Require well above that.
+	 */
+	if ((cwrite_count - before) < 30) {
+		FAIL("Too few central writes under continuation: %d\n",
+		     cwrite_count - before);
+		return;
+	}
+	PASS("Peripheral C->P continuation validated (%d writes in 3 s)\n",
+	     cwrite_count - before);
+}
+
 static void test_peripheral_main_latency(void)
 {
 	peripheral_run(SUBRATE_LAT_FACTOR, SUBRATE_LAT_FACTOR, SUBRATE_LAT_LATENCY, 0U);
@@ -351,6 +418,14 @@ static const struct bst_test_instance test_peripheral[] = {
 		.test_pre_init_f = test_peripheral_init,
 		.test_tick_f = test_peripheral_tick,
 		.test_main_f = test_peripheral_main_supervision,
+	},
+	{
+		.test_id = "peripheral_cwrite",
+		.test_descr = "Peripheral: counts the Central's write-without-response "
+			      "burst under continuation.",
+		.test_pre_init_f = test_peripheral_init,
+		.test_tick_f = test_peripheral_tick,
+		.test_main_f = test_peripheral_main_cwrite,
 	},
 	BSTEST_END_MARKER,
 };

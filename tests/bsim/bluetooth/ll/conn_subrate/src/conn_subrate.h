@@ -74,6 +74,17 @@
 #define SUBRATE_COLL_PERIPH  2U /* peripheral's colliding request */
 #define COLLISION_TIME_MS    3000 /* both fire at this uptime */
 
+/* Central->Peripheral continuation test: a write-without-response characteristic
+ * the Central bursts data to. Write-without-response is one-way (no GATT
+ * response), so only the Central's own Tx can open its continuation window -
+ * this isolates that path. With it working the burst arrives at ~the event
+ * rate; otherwise it is throttled to the subrate cadence (factor x fewer).
+ */
+#define CWRITE_SVC_UUID \
+	BT_UUID_128_ENCODE(0x5ab12701, 0x1234, 0x4c0d, 0x9e1a, 0xc0ffee000001)
+#define CWRITE_CHR_UUID \
+	BT_UUID_128_ENCODE(0x5ab12702, 0x1234, 0x4c0d, 0x9e1a, 0xc0ffee000002)
+
 /* Notifications-under-subrating: notify slower than the skip period (factor *
  * interval = 240 ms at factor 8) so each notification is queued during a skip
  * and must wake the peripheral on a subrated event to be delivered - rather
