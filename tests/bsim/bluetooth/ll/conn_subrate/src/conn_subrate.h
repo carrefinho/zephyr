@@ -68,6 +68,15 @@
 #define SUBRATE_LAT_FACTOR  4U
 #define SUBRATE_LAT_LATENCY 2U  /* effective skip = 4*(2+1) = 12 events */
 
+/* Central-cadence regression lock (reuses peripheral_latency). With the
+ * Peripheral coasting on its stacked max_latency, the Central must stay present
+ * only on its own subrated events (every factor). A controller that breaks
+ * latency on the Peripheral's expected skipped events collapses the Central to
+ * ~full rate; counting the Central's events over an idle window catches that.
+ * Window spans several stacked cycles (factor*(latency+1)*interval = 360 ms).
+ */
+#define LAT_COUNT_WINDOW_MS 3000
+
 /* Collision test: both sides request a subrate change at the same time. */
 #define SUBRATE_COLL_INITIAL 4U /* peripheral negotiates this first */
 #define SUBRATE_COLL_CENTRAL 8U /* central's colliding request */
