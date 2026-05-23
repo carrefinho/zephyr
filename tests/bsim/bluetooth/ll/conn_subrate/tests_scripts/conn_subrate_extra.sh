@@ -31,6 +31,8 @@ run_scenario() {
 run_scenario conn_subrate_continuation peripheral_continuation central_continuation
 run_scenario conn_subrate_latency       peripheral_latency       central_latency
 run_scenario conn_subrate_latcount      peripheral_latency       central_lat_count
+run_scenario conn_subrate_cadence8      peripheral               central_cadence
+run_scenario conn_subrate_cadence5      peripheral_oddfactor     central_cadence
 run_scenario conn_subrate_collision     peripheral_collision     central_collision
 run_scenario conn_subrate_phy           peripheral               central_phy
 run_scenario conn_subrate_disable       peripheral               central_disable

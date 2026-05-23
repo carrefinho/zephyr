@@ -579,6 +579,54 @@ static void test_central_main_lat_count(void)
 	     "in %u ms, factor %u)\n", wakes, LAT_COUNT_WINDOW_MS, subrate_factor);
 	bs_trace_silent_exit(0);
 }
+
+/* Exact central skip-cadence lock at the negotiated factor (no peripheral
+ * latency stacking, so central and peripheral are aligned). The central must be
+ * present ~once per `factor` events. Run against peripherals negotiating
+ * different factors -- including non-power-of-2 -- to catch over-skip,
+ * under-skip/burst and subrated-event phase-math errors, the dimension the
+ * read-latency probes can't measure precisely.
+ */
+static void test_central_main_cadence(void)
+{
+	uint32_t interval_ms, expected, hi, lo, wakes, before, factor;
+
+	if (central_start()) {
+		return;
+	}
+	SUBRATE_WAIT(default_conn && subrate_factor >= 2U);
+	factor = subrate_factor;
+
+	/* Let the subrate negotiation and any feature/PHY exchange settle. */
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+	interval_ms = interval_to_ms(CONN_INTERVAL_UNITS);
+
+	before = ll_test_conn_event_count[0];
+	k_sleep(K_MSEC(LAT_COUNT_WINDOW_MS));
+	wakes = ll_test_conn_event_count[0] - before;
+
+	expected = LAT_COUNT_WINDOW_MS / (factor * interval_ms);
+	hi = expected + (expected / 2U) + 2U;
+	lo = (expected > 2U) ? (expected / 2U) : 1U;
+	printk("Central present %u events in %u ms (factor %u, cadence ~%u, [%u..%u])\n",
+	       wakes, LAT_COUNT_WINDOW_MS, factor, expected, lo, hi);
+
+	if (wakes > hi) {
+		FAIL("Central over-present: %u > %u events - skip cadence broken "
+		     "(factor %u)\n", wakes, hi, factor);
+		return;
+	}
+	if (wakes < lo) {
+		FAIL("Central under-present: %u < %u events - over-skip/phase error "
+		     "(factor %u)\n", wakes, lo, factor);
+		return;
+	}
+
+	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	PASS("Central skip cadence correct (%u events in %u ms, factor %u)\n",
+	     wakes, LAT_COUNT_WINDOW_MS, factor);
+	bs_trace_silent_exit(0);
+}
 #endif /* CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT */
 
 static void test_central_main_collision(void)
@@ -997,6 +1045,15 @@ static const struct bst_test_instance test_central[] = {
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_lat_count,
+	},
+	{
+		.test_id = "central_cadence",
+		.test_descr = "Central: exact on-air skip cadence at the negotiated "
+			      "factor (catches over/under-skip and phase errors; run "
+			      "at several factors incl non-power-of-2).",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_cadence,
 	},
 #endif
 	{
