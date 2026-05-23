@@ -75,6 +75,47 @@ static uint8_t read_func(struct bt_conn *conn, uint8_t err,
 	return BT_GATT_ITER_STOP;
 }
 
+#if defined(CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT)
+/* Multi-connection test state: the Central holds two links - one that
+ * negotiates subrating and one that does not - to verify the subrated link
+ * keeps its cadence while the second (full-rate) link is active, i.e. the
+ * scheduler juggling both does not break the subrate skip. The per-conn event
+ * counter (ll_test_conn_event_count[]) measures each link independently.
+ */
+static struct bt_conn *m_conn[2];
+static volatile int m_created;
+static volatile int m_nconns;
+static volatile uint16_t m_subrated_handle = 0xFFFFU;
+static volatile bool multi_mode;
+
+static void device_found_multi(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
+			       struct net_buf_simple *ad)
+{
+	struct bt_le_conn_param *param;
+	int err;
+
+	if ((m_created >= 2) || (type != BT_GAP_ADV_TYPE_ADV_IND &&
+				 type != BT_GAP_ADV_TYPE_ADV_DIRECT_IND)) {
+		return;
+	}
+
+	err = bt_le_scan_stop();
+	if (err) {
+		FAIL("Multi: stop scan failed (err %d)\n", err);
+		return;
+	}
+
+	param = BT_LE_CONN_PARAM(CONN_INTERVAL_UNITS, CONN_INTERVAL_UNITS,
+				 0, CONN_TIMEOUT_UNITS);
+	err = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN, param, &m_conn[m_created]);
+	if (err) {
+		FAIL("Multi: create connection %d failed (err %d)\n", m_created, err);
+		return;
+	}
+	m_created++;
+}
+#endif /* CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT */
+
 static void subrate_changed(struct bt_conn *conn,
 			    const struct bt_conn_le_subrate_changed *params)
 {
@@ -93,6 +134,16 @@ static void subrate_changed(struct bt_conn *conn,
 	}
 
 	subrate_factor = params->factor;
+
+#if defined(CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT)
+	if (multi_mode && params->factor > 1U) {
+		uint16_t h;
+
+		if (!bt_hci_get_conn_handle(conn, &h)) {
+			m_subrated_handle = h;
+		}
+	}
+#endif
 }
 
 static void le_param_updated(struct bt_conn *conn, uint16_t interval,
@@ -118,6 +169,15 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 
 	central_connected = true;
 	printk("Central connected\n");
+
+#if defined(CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT)
+	/* Just record completion; the test thread drives the scan for the next
+	 * link (never issue a blocking HCI command from a connection callback).
+	 */
+	if (multi_mode) {
+		m_nconns++;
+	}
+#endif
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -627,6 +687,120 @@ static void test_central_main_cadence(void)
 	     wakes, LAT_COUNT_WINDOW_MS, factor);
 	bs_trace_silent_exit(0);
 }
+
+static int central_init_multi(void)
+{
+	struct bt_conn_le_subrate_param defaults = {
+		.subrate_min = 1U,
+		.subrate_max = SUBRATE_ACC_MAX,
+		.max_latency = 10U,
+		.continuation_number = 0U,
+		.supervision_timeout = CONN_TIMEOUT_UNITS,
+	};
+	int err;
+
+	bt_conn_cb_register(&conn_callbacks);
+
+	err = bt_enable(NULL);
+	if (err) {
+		FAIL("Bluetooth init failed (err %d)\n", err);
+		return err;
+	}
+
+	err = bt_conn_le_subrate_set_defaults(&defaults);
+	if (err) {
+		FAIL("Set default subrate failed (err %d)\n", err);
+		return err;
+	}
+
+	return 0;
+}
+
+/* Multi-connection: the Central holds two links - one peer requests subrating,
+ * the other never does (full rate). The subrated link must hold its skip
+ * cadence while the full-rate link is active every event; a scheduler that
+ * lets the busy link drag the subrated one back to full rate is caught here.
+ * This mirrors the real split topology (subrated split link + non-subrated host
+ * link on one Central).
+ */
+static void test_central_main_multi(void)
+{
+	uint32_t interval_ms, expected_sub, hi_sub, wakes_sub, wakes_plain;
+	uint32_t before_sub, before_plain;
+	uint16_t h0, h1, plain_handle, factor;
+	int i;
+
+	multi_mode = true;
+	if (central_init_multi()) {
+		return;
+	}
+	/* Connect to both peers one at a time, driving the scan from this thread.
+	 * device_found_multi stops the scan and creates each link; the connected
+	 * callback only bumps m_nconns (no HCI calls from callback context).
+	 */
+	for (i = 0; i < 2; i++) {
+		int err = bt_le_scan_start(BT_LE_SCAN_ACTIVE, device_found_multi);
+
+		if (err) {
+			FAIL("Multi: scan start for link %d failed (err %d)\n", i, err);
+			return;
+		}
+		SUBRATE_WAIT(m_nconns > i);
+	}
+	/* One peer requests subrating; wait for it to be negotiated. */
+	SUBRATE_WAIT(m_subrated_handle != 0xFFFFU);
+	factor = subrate_factor;
+
+	if (bt_hci_get_conn_handle(m_conn[0], &h0) ||
+	    bt_hci_get_conn_handle(m_conn[1], &h1)) {
+		FAIL("Multi: could not read conn handles\n");
+		return;
+	}
+	plain_handle = (h0 == m_subrated_handle) ? h1 : h0;
+	printk("Multi: subrated handle %u (factor %u), plain handle %u\n",
+	       m_subrated_handle, factor, plain_handle);
+
+	/* Let both links settle (negotiation, feature/PHY exchange). */
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+	interval_ms = interval_to_ms(CONN_INTERVAL_UNITS);
+
+	before_sub = ll_test_conn_event_count[m_subrated_handle];
+	before_plain = ll_test_conn_event_count[plain_handle];
+	k_sleep(K_MSEC(LAT_COUNT_WINDOW_MS));
+	wakes_sub = ll_test_conn_event_count[m_subrated_handle] - before_sub;
+	wakes_plain = ll_test_conn_event_count[plain_handle] - before_plain;
+
+	expected_sub = LAT_COUNT_WINDOW_MS / (factor * interval_ms);
+	hi_sub = expected_sub + (expected_sub / 2U) + 2U;
+	printk("Multi: subrated link %u events (cadence ~%u, <=%u), plain link %u events "
+	       "in %u ms\n", wakes_sub, expected_sub, hi_sub, wakes_plain, LAT_COUNT_WINDOW_MS);
+
+	/* The subrated link keeps its cadence despite the concurrent full-rate link. */
+	if (wakes_sub > hi_sub) {
+		FAIL("Multi: subrated link over-present: %u > %u events - cadence "
+		     "broken by the concurrent link\n", wakes_sub, hi_sub);
+		return;
+	}
+	if (wakes_sub < (expected_sub / 2U)) {
+		FAIL("Multi: subrated link stalled: %u events\n", wakes_sub);
+		return;
+	}
+	/* Sanity: the other link really is full rate (clearly above the subrated
+	 * cadence), confirming we measured two distinct links.
+	 */
+	if (wakes_plain < (2U * hi_sub)) {
+		FAIL("Multi: plain link not full-rate: %u events (expected >> %u)\n",
+		     wakes_plain, hi_sub);
+		return;
+	}
+
+	for (i = 0; i < 2; i++) {
+		(void)bt_conn_disconnect(m_conn[i], BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	}
+	PASS("Multi: subrated link held cadence (%u events) alongside full-rate link "
+	     "(%u events)\n", wakes_sub, wakes_plain);
+	bs_trace_silent_exit(0);
+}
 #endif /* CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT */
 
 static void test_central_main_collision(void)
@@ -1054,6 +1228,14 @@ static const struct bst_test_instance test_central[] = {
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_cadence,
+	},
+	{
+		.test_id = "central_multi",
+		.test_descr = "Central: two links (one subrated, one full-rate); the "
+			      "subrated link holds its cadence while the other is busy.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_multi,
 	},
 #endif
 	{
