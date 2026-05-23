@@ -36,6 +36,13 @@
 
 extern enum bst_result_t bst_result;
 
+#if defined(CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT)
+/* Controller (ull_conn.c) per-connection count of events the device was present
+ * for. Same binary in bsim, so this links directly. Used by central_lat_count.
+ */
+extern volatile uint32_t ll_test_conn_event_count[];
+#endif
+
 #define FAIL(...)					\
 	do {						\
 		bst_result = Failed;			\
@@ -516,6 +523,64 @@ static void test_central_main_latency(void)
 	bs_trace_silent_exit(0);
 }
 
+#if defined(CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT)
+/* Regression lock for the central-burst bug: under peripheral max_latency
+ * stacking the central must stay on its subrate cadence (present every `factor`
+ * events) and must NOT break latency to ~full rate on the peripheral's expected
+ * skipped events. Reuses the peripheral_latency peer (factor 4, max_latency 2,
+ * cn 0, then idle) and counts the central's own on-air events over an idle
+ * window - the only way to see the burst, which has no peripheral-observable
+ * effect.
+ */
+static void test_central_main_lat_count(void)
+{
+	uint32_t interval_ms, expected, threshold, wakes;
+	uint32_t before;
+
+	if (central_start()) {
+		return;
+	}
+	SUBRATE_WAIT(default_conn && subrate_factor == SUBRATE_LAT_FACTOR);
+
+	/* Let the subrate negotiation and any feature/PHY exchange settle so the
+	 * steady-state count is clean.
+	 */
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	interval_ms = interval_to_ms(CONN_INTERVAL_UNITS);
+
+	before = ll_test_conn_event_count[0];
+	k_sleep(K_MSEC(LAT_COUNT_WINDOW_MS));
+	wakes = ll_test_conn_event_count[0] - before;
+
+	/* Subrate cadence: the central is present once per `factor` events,
+	 * regardless of the peripheral coasting further on max_latency.
+	 */
+	expected = LAT_COUNT_WINDOW_MS / (SUBRATE_LAT_FACTOR * interval_ms);
+	threshold = expected + (expected / 2U) + 2U; /* 1.5x + slack */
+	printk("Central present %u events in %u ms (subrate cadence ~%u, "
+	       "threshold %u, factor %u)\n",
+	       wakes, LAT_COUNT_WINDOW_MS, expected, threshold, subrate_factor);
+
+	if (wakes > threshold) {
+		FAIL("Central over-present: %u > %u events - subrate skip broken by "
+		     "peripheral latency (collapsed toward full rate)\n", wakes, threshold);
+		return;
+	}
+	/* Sanity: still present at roughly the cadence (not stalled/disconnected). */
+	if (wakes < (expected / 2U)) {
+		FAIL("Central barely present: %u < %u events - link stalled?\n",
+		     wakes, expected / 2U);
+		return;
+	}
+
+	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	PASS("Central held subrate cadence under peripheral latency (%u events "
+	     "in %u ms, factor %u)\n", wakes, LAT_COUNT_WINDOW_MS, subrate_factor);
+	bs_trace_silent_exit(0);
+}
+#endif /* CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT */
+
 static void test_central_main_collision(void)
 {
 	struct bt_conn_le_subrate_param to_central = {
@@ -923,6 +988,17 @@ static const struct bst_test_instance test_central[] = {
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_latency,
 	},
+#if defined(CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT)
+	{
+		.test_id = "central_lat_count",
+		.test_descr = "Central: under peripheral max_latency stacking the "
+			      "central stays on its subrate cadence and does not break "
+			      "latency to full rate on the peripheral's skipped events.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_lat_count,
+	},
+#endif
 	{
 		.test_id = "central_collision",
 		.test_descr = "Central: re-negotiates subrating simultaneously with "
