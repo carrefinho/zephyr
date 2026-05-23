@@ -231,6 +231,25 @@ static void test_peripheral_main_supervision(void)
 	peripheral_run(SUBRATE_SUPERVISION_FACTOR, SUBRATE_SUPERVISION_FACTOR, 0U, 0U);
 }
 
+static void test_peripheral_main_plain(void)
+{
+	if (peripheral_setup()) {
+		return;
+	}
+	/* Full-rate peer for the multi-connection test: connect and idle, never
+	 * request subrating. Mark pass once connected (the central drives and
+	 * validates the cadence); unlike the subrating peers there is no
+	 * subrate_changed to pass on. Then stay alive for the rest of the sim.
+	 */
+	while (!connected_flag) {
+		k_sleep(K_MSEC(50));
+	}
+	PASS("Peripheral (plain) connected; full-rate peer\n");
+	while (true) {
+		k_sleep(K_MSEC(SETTLE_DELAY_MS));
+	}
+}
+
 static void test_peripheral_main_cwrite(void)
 {
 	int before;
@@ -426,6 +445,14 @@ static const struct bst_test_instance test_peripheral[] = {
 		.test_pre_init_f = test_peripheral_init,
 		.test_tick_f = test_peripheral_tick,
 		.test_main_f = test_peripheral_main_cwrite,
+	},
+	{
+		.test_id = "peripheral_plain",
+		.test_descr = "Peripheral: connects and idles, never requests subrating "
+			      "(full-rate peer for the multi-connection test).",
+		.test_pre_init_f = test_peripheral_init,
+		.test_tick_f = test_peripheral_tick,
+		.test_main_f = test_peripheral_main_plain,
 	},
 	BSTEST_END_MARKER,
 };
