@@ -1324,7 +1324,24 @@ void ull_conn_done(struct node_rx_event_done *done)
 			conn->supervision_expire -= elapsed_event;
 
 			/* break latency */
-			lll->latency_event = 0U;
+#if defined(CONFIG_BT_CTLR_SUBRATING) && defined(CONFIG_BT_CENTRAL)
+			/* While subrating, the Central is present on every subrated
+			 * event but the Peripheral may legitimately skip subrated
+			 * events (subrate peripheral latency). A missing packet at the
+			 * Central is therefore expected and must NOT break its subrate
+			 * skip - doing so collapses the Central to full rate until the
+			 * Peripheral reappears (one resync burst per subrate cycle).
+			 * The supervision counter still elapses (above) and the link is
+			 * dropped on true timeout below; only break latency to
+			 * re-acquire when genuinely close to that timeout.
+			 */
+			if (!((lll->role == BT_HCI_ROLE_CENTRAL) &&
+			      (conn->subrate.factor > 1U)) ||
+			    (conn->supervision_expire <= 6U))
+#endif /* CONFIG_BT_CTLR_SUBRATING && CONFIG_BT_CENTRAL */
+			{
+				lll->latency_event = 0U;
+			}
 
 			/* Force both central and peripheral when close to
 			 * supervision timeout.
