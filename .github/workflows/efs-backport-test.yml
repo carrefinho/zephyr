@@ -1,0 +1,68 @@
+# CI for the Extended Feature Set host backport (step 1 of the SCI/FSU work).
+#
+# Compile-checks the backported host EFS code via the upstream-provided twister
+# scenario `bluetooth.shell.extended_feature_set` (build_only, BT_LL_SW_SPLIT=n,
+# so host-only: it compiles the host EFS path without needing controller support,
+# which is still greenfield). native_sim => fast host build, no SDK cross-compile.
+#
+# The existing "Subrating Tests" workflow runs in parallel on this branch as a
+# regression check: it builds the modified host files with EFS #if'd out and runs
+# the subrating bsim suite, catching any breakage in the always-compiled additions
+# (feature-bit defines, the new bt_conn feature-pages field, Kconfig).
+name: Extended Feature Set Backport
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+jobs:
+  efs-host-compile:
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/zephyrproject-rtos/ci-repo-cache:v0.27.4.20241026
+      options: "--entrypoint /bin/bash"
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Clone cached Zephyr repository (speeds up checkout/update)
+        continue-on-error: true
+        run: |
+          git clone --shared /repo-cache/zephyrproject/zephyr .
+          git remote set-url origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: West init + update
+        run: |
+          west init -l . || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update --path-cache /repo-cache/zephyrproject 1> west.update.log 2>&1 \
+            || west update 1> west.update.log 2>&1
+          west forall -c 'git reset --hard HEAD'
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
+
+      - name: Build host Extended Feature Set (twister, native_sim, build-only)
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export ZEPHYR_TOOLCHAIN_VARIANT=zephyr
+          ./scripts/twister -p native_sim \
+            -T tests/bluetooth/shell -s bluetooth.shell.extended_feature_set \
+            --inline-logs -v -N --no-detailed-test-id
+
+      - name: Upload twister output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: efs-twister-out
+          path: |
+            twister-out/twister.log
+            twister-out/**/build.log
+          if-no-files-found: ignore
