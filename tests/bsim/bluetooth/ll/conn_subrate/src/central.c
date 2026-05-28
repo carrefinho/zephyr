@@ -838,6 +838,17 @@ static void test_central_main_lowlat_multi(void)
 		return;
 	}
 
+	/* Decisive config dump: a sub-7.5ms update is rejected by the connection
+	 * update validation (CONN_INTERVAL_MIN) unless LOW_LATENCY is actually on,
+	 * in which case EVENT_IFS_LOW_LAT_US is 52 (else 150).
+	 */
+	printk("SCI-SPIKE cfg: LOW_LATENCY=%d CONN_PARAM_REQ=%d PARAM_ANY=%d "
+	       "IFS_LOW_LAT_US=%d\n",
+	       IS_ENABLED(CONFIG_BT_CTLR_CONN_INTERVAL_LOW_LATENCY),
+	       IS_ENABLED(CONFIG_BT_CTLR_CONN_PARAM_REQ),
+	       IS_ENABLED(CONFIG_BT_CONN_PARAM_ANY),
+	       CONFIG_BT_CTLR_EVENT_IFS_LOW_LAT_US);
+
 	/* Connect to both peers at the normal 30ms interval (reuse the multi
 	 * scan/connect helper, which creates each link at CONN_INTERVAL_UNITS).
 	 */
@@ -881,6 +892,8 @@ static void test_central_main_lowlat_multi(void)
 		     "anchor lost on the update\n");
 		return;
 	}
+	printk("SCI-SPIKE: last reported interval after update = %u (was 24); "
+	       "if unchanged, the sub-7.5ms update was rejected\n", conn_interval);
 
 	before_lowlat = ll_test_conn_event_count[h0];
 	before_plain  = ll_test_conn_event_count[h1];
