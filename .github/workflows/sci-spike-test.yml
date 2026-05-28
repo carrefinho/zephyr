@@ -1,0 +1,79 @@
+# CI for the SCI (Shorter Connection Intervals) feasibility spike on a fork.
+#
+# Reuses the public Zephyr CI container (bundles GCC, the Zephyr SDK and a
+# pre-built BabbleSim at /opt/bsim) on GitHub-hosted runners, like the subrating
+# workflow it temporarily stands in for. Compiles the conn_subrate bsim app
+# (built here with CONFIG_BT_CTLR_CONN_INTERVAL_LOW_LATENCY + CONFIG_BT_CONN_PARAM_ANY)
+# for nRF52 and runs ONLY the central_lowlat_multi spike: a ~1ms low-latency link
+# held alongside a full-rate link. This answers the SCI RCV go/no-go - whether
+# LL_SW can hold a sub-7.5ms anchor under split-link contention - on the
+# nrf52_bsim HW model (which carries the nRF52 radio timing and the 733/428us
+# event overhead constants), so it is a meaningful proxy short of real silicon.
+name: SCI Feasibility Spike
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+jobs:
+  sci-lowlat-spike-bsim:
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/zephyrproject-rtos/ci-repo-cache:v0.27.4.20241026
+      options: "--entrypoint /bin/bash"
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+      BSIM_OUT_PATH: /opt/bsim/
+      BSIM_COMPONENTS_PATH: /opt/bsim/components
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Clone cached Zephyr repository (speeds up checkout/update)
+        continue-on-error: true
+        run: |
+          git clone --shared /repo-cache/zephyrproject/zephyr .
+          git remote set-url origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: West init + update
+        run: |
+          west init -l . || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update --path-cache /repo-cache/zephyrproject 1> west.update.log 2>&1 \
+            || west update 1> west.update.log 2>&1
+          west forall -c 'git reset --hard HEAD'
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
+
+      - name: Compile conn_subrate bsim app (nRF52, low-latency enabled)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+          app=tests/bsim/bluetooth/ll/conn_subrate compile
+          wait_for_background_jobs
+
+      - name: Run SCI low-latency feasibility spike (nRF52)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=120
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_lowlat_spike.sh
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sci-spike-logs
+          path: |
+            *.log
+            west.update.log
+          if-no-files-found: ignore

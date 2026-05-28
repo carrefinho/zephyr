@@ -87,6 +87,11 @@ static volatile int m_created;
 static volatile int m_nconns;
 static volatile uint16_t m_subrated_handle = 0xFFFFU;
 static volatile bool multi_mode;
+/* Set by the disconnected callback if a multi-link drops for a reason other
+ * than our own teardown - i.e. the low-latency link lost anchor (supervision
+ * timeout) under contention. The SCI spike asserts this stays false.
+ */
+static volatile bool m_unexpected_disc;
 
 static void device_found_multi(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 			       struct net_buf_simple *ad)
@@ -183,6 +188,16 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	printk("Central disconnected (reason 0x%02x)\n", reason);
+
+#if defined(CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT)
+	/* In the multi-link tests, an unsolicited disconnect (anything but our own
+	 * teardown) means a link lost sync - flag it for the SCI spike's check.
+	 */
+	if (multi_mode && reason != BT_HCI_ERR_REMOTE_USER_TERM_CONN &&
+	    reason != BT_HCI_ERR_LOCALHOST_TERM_CONN) {
+		m_unexpected_disc = true;
+	}
+#endif
 
 	if (default_conn) {
 		bt_conn_unref(default_conn);
@@ -801,6 +816,117 @@ static void test_central_main_multi(void)
 	     "(%u events)\n", wakes_sub, wakes_plain);
 	bs_trace_silent_exit(0);
 }
+
+/* SCI feasibility spike (the RCV go/no-go): the same two-link split topology,
+ * but link 0 is pushed below 7.5ms (the low-latency reduced-reservation path)
+ * while link 1 stays full-rate at 30ms. The question this answers: can the LL_SW
+ * scheduler hold a sub-7.5ms anchor under a concurrent full-rate link, or does it
+ * starve/drop it (the preempt-overhead failure mode that parked the
+ * CIS-alongside-split work)? We connect both at 30ms then connection-update link
+ * 0 down to ~1ms, mirroring how a keyboard would request a faster rate.
+ */
+static void test_central_main_lowlat_multi(void)
+{
+	struct bt_le_conn_param *fast;
+	uint32_t expected_lowlat, wakes_lowlat, wakes_plain;
+	uint32_t before_lowlat, before_plain, pct;
+	uint16_t h0, h1;
+	int i, err;
+
+	multi_mode = true;
+	if (central_init_multi()) {
+		return;
+	}
+
+	/* Connect to both peers at the normal 30ms interval (reuse the multi
+	 * scan/connect helper, which creates each link at CONN_INTERVAL_UNITS).
+	 */
+	for (i = 0; i < 2; i++) {
+		err = bt_le_scan_start(BT_LE_SCAN_ACTIVE, device_found_multi);
+		if (err) {
+			FAIL("Lowlat: scan start for link %d failed (err %d)\n", i, err);
+			return;
+		}
+		SUBRATE_WAIT(m_nconns > i);
+	}
+	if (bt_hci_get_conn_handle(m_conn[0], &h0) ||
+	    bt_hci_get_conn_handle(m_conn[1], &h1)) {
+		FAIL("Lowlat: could not read conn handles\n");
+		return;
+	}
+
+	/* Let both links settle at full rate first. */
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+	if (m_unexpected_disc) {
+		FAIL("Lowlat: a link dropped during the initial settle\n");
+		return;
+	}
+
+	/* Push link 0 below 7.5ms -> engages the low-latency reduced-reservation
+	 * path; link 1 keeps running full-rate at 30ms in parallel.
+	 */
+	fast = BT_LE_CONN_PARAM(LOWLAT_INTERVAL_UNITS, LOWLAT_INTERVAL_UNITS, 0U,
+				CONN_TIMEOUT_UNITS);
+	err = bt_conn_le_param_update(m_conn[0], fast);
+	if (err) {
+		FAIL("Lowlat: param update to %u units failed (err %d)\n",
+		     LOWLAT_INTERVAL_UNITS, err);
+		return;
+	}
+
+	/* Allow the update to take effect on air. */
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+	if (m_unexpected_disc) {
+		FAIL("Lowlat: link dropped while applying the sub-7.5ms interval - "
+		     "anchor lost on the update\n");
+		return;
+	}
+
+	before_lowlat = ll_test_conn_event_count[h0];
+	before_plain  = ll_test_conn_event_count[h1];
+	k_sleep(K_MSEC(LAT_COUNT_WINDOW_MS));
+	wakes_lowlat = ll_test_conn_event_count[h0] - before_lowlat;
+	wakes_plain  = ll_test_conn_event_count[h1] - before_plain;
+
+	/* Nominal cadence: ~1 event/ms for link 0, ~1 event/30ms for link 1. */
+	expected_lowlat = LAT_COUNT_WINDOW_MS / LOWLAT_INTERVAL_MS;
+	pct = (wakes_lowlat * 100U) / expected_lowlat;
+	printk("Lowlat: 1ms link %u events (nominal ~%u, %u%%), 30ms link %u events "
+	       "in %u ms\n", wakes_lowlat, expected_lowlat, pct, wakes_plain,
+	       LAT_COUNT_WINDOW_MS);
+
+	if (m_unexpected_disc) {
+		FAIL("Lowlat: a link dropped under contention (supervision timeout) - "
+		     "scheduler could not hold the sub-7.5ms anchor\n");
+		return;
+	}
+	/* Hard gate: the 1ms link must not be starved to a standstill by the
+	 * concurrent full-rate link. Near-nominal cadence == anchor held.
+	 */
+	if (wakes_lowlat < (expected_lowlat / 10U)) {
+		FAIL("Lowlat: 1ms link starved: %u events (<10%% of ~%u) - LL_SW could "
+		     "not hold a sub-7.5ms anchor under split load\n",
+		     wakes_lowlat, expected_lowlat);
+		return;
+	}
+	if (wakes_plain == 0U) {
+		FAIL("Lowlat: full-rate link stalled (0 events)\n");
+		return;
+	}
+	if (wakes_lowlat <= wakes_plain) {
+		FAIL("Lowlat: 1ms link (%u) not faster than 30ms link (%u) - the "
+		     "sub-7.5ms interval did not take effect\n",
+		     wakes_lowlat, wakes_plain);
+		return;
+	}
+
+	for (i = 0; i < 2; i++) {
+		(void)bt_conn_disconnect(m_conn[i], BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	}
+	PASS("Lowlat: 1ms link held anchor (%u events, %u%% of nominal) alongside "
+	     "full-rate link (%u events)\n", wakes_lowlat, pct, wakes_plain);
+	bs_trace_silent_exit(0);
+}
 #endif /* CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT */
 
 static void test_central_main_collision(void)
@@ -1236,6 +1362,15 @@ static const struct bst_test_instance test_central[] = {
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_multi,
+	},
+	{
+		.test_id = "central_lowlat_multi",
+		.test_descr = "Central (SCI spike): push one link below 7.5ms (~1ms, "
+			      "low-latency reduced-reservation path) alongside a full-rate "
+			      "link; the 1ms link must hold anchor under the contention.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_lowlat_multi,
 	},
 #endif
 	{

@@ -14,12 +14,13 @@
 name: Subrating Tests
 
 on:
-  # NB: '+' is a glob metacharacter in GitHub branch filters, so the literal
-  # branch name "v4.1.0+zmk+subrating" cannot be matched directly. Match all
-  # branches (only this branch carries the workflow file) instead.
-  push:
-    branches:
-      - "**"
+  # TEMPORARILY DISABLED on the SCI feasibility spike branch: the push trigger is
+  # removed so only the SCI spike workflow burns CI here. Re-enable by restoring
+  # the push/branches block below. Still runnable on demand via workflow_dispatch.
+  #
+  # push:
+  #   branches:
+  #     - "**"
   workflow_dispatch:
 
 jobs:

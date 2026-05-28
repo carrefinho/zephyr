@@ -15,6 +15,16 @@
 #define CONN_INTERVAL_UNITS 24U  /* 30 ms (1.25 ms units) */
 #define CONN_TIMEOUT_UNITS  200U /* 2 s (10 ms units) */
 
+/* SCI feasibility spike: a sub-7.5ms "low latency" interval. Interval values
+ * below BT_HCI_LE_INTERVAL_MIN (6 units / 7.5 ms) engage the controller's
+ * BT_CTLR_CONN_INTERVAL_LOW_LATENCY path, where the on-air interval is
+ * (units + 1) * 500 us and only the processing overhead is reserved (the
+ * is_abort_cb anchor-sync path). So 1 -> ~1 ms, more aggressive than RCV's
+ * 1.25 ms floor, which is exactly the scheduler stress we want to probe.
+ */
+#define LOWLAT_INTERVAL_UNITS 1U
+#define LOWLAT_INTERVAL_MS    1U  /* (1 + 1) * 500 us = 1 ms */
+
 /* Peripheral-initiated Connection Subrate Request parameters (5.1.20). A range
  * is requested so the central can grant the largest factor it accepts.
  */
