@@ -100,6 +100,19 @@ struct llcp_struct {
 		 * may be limited to features that are common.
 		 */
 		uint64_t features_used;
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+		/*
+		 * LL Extended Feature Set (Core 6.0): the uint64 page 0 above stays
+		 * byte-identical; feature pages >= 1 (bits >= 64, e.g. Frame Space
+		 * Update / Shorter Connection Intervals) are stored here as a raw
+		 * octet slice exchanged via the Feature Page Exchange procedure.
+		 * 24 == BT_HCI_LE_BYTES_PER_FEATURE_PAGE. Zeroed by the memset of
+		 * this struct on connection setup.
+		 */
+		uint8_t features_peer_ext[24];
+		uint8_t max_page_peer;
+		uint8_t ext_valid;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 	} fex;
 
 	/* Minimum used channels procedure state */
