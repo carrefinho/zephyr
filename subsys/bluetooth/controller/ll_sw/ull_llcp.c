@@ -1774,6 +1774,18 @@ static bool pdu_validate_feature_rsp(struct pdu_data *pdu)
 }
 #endif
 
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+static bool pdu_validate_feature_ext_req(struct pdu_data *pdu)
+{
+	return VALIDATE_PDU_LEN(pdu, feature_ext_req);
+}
+
+static bool pdu_validate_feature_ext_rsp(struct pdu_data *pdu)
+{
+	return VALIDATE_PDU_LEN(pdu, feature_ext_rsp);
+}
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
+
 #if defined(CONFIG_BT_CTLR_LE_ENC) && defined(CONFIG_BT_PERIPHERAL)
 static bool pdu_validate_pause_enc_req(struct pdu_data *pdu)
 {
@@ -1994,6 +2006,10 @@ static const struct pdu_validate pdu_validate[] = {
 	[PDU_DATA_LLCTRL_TYPE_SUBRATE_REQ] = { pdu_validate_subrate_req },
 	[PDU_DATA_LLCTRL_TYPE_SUBRATE_IND] = { pdu_validate_subrate_ind },
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	[PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_REQ] = { pdu_validate_feature_ext_req },
+	[PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_RSP] = { pdu_validate_feature_ext_rsp },
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 };
 
 static bool pdu_is_valid(struct pdu_data *pdu)

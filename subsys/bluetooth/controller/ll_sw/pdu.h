@@ -626,6 +626,8 @@ enum pdu_data_llctrl_type {
 	PDU_DATA_LLCTRL_TYPE_CIS_TERMINATE_IND = 0x22,
 	PDU_DATA_LLCTRL_TYPE_SUBRATE_REQ = 0x26,
 	PDU_DATA_LLCTRL_TYPE_SUBRATE_IND = 0x27,
+	PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_REQ = 0x2B,
+	PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_RSP = 0x2C,
 	PDU_DATA_LLCTRL_TYPE_UNUSED = 0xFF
 };
 
@@ -678,6 +680,25 @@ struct pdu_data_llctrl_feature_req {
 struct pdu_data_llctrl_feature_rsp {
 	uint8_t features[8];
 } __packed;
+
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+/* LL Extended Feature Set (Core 6.0) page-exchange PDUs. FeaturePage is 24
+ * octets (== BT_HCI_LE_BYTES_PER_FEATURE_PAGE), so the PDU is 1 (opcode) + 1 +
+ * 1 + 24 = 27 octets == PDU_DC_PAYLOAD_SIZE_MIN (the minimum data PDU payload),
+ * i.e. it fits the existing buffers without enlarging PDU_DC_CTRL_*_SIZE_MAX.
+ */
+struct pdu_data_llctrl_feature_ext_req {
+	uint8_t max_page;
+	uint8_t page_number;
+	uint8_t features[24];
+} __packed;
+
+struct pdu_data_llctrl_feature_ext_rsp {
+	uint8_t max_page;
+	uint8_t page_number;
+	uint8_t features[24];
+} __packed;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 
 struct pdu_data_llctrl_pause_enc_req {
 	/* no members */
@@ -944,6 +965,10 @@ struct pdu_data_llctrl {
 		struct pdu_data_llctrl_unknown_rsp unknown_rsp;
 		struct pdu_data_llctrl_feature_req feature_req;
 		struct pdu_data_llctrl_feature_rsp feature_rsp;
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+		struct pdu_data_llctrl_feature_ext_req feature_ext_req;
+		struct pdu_data_llctrl_feature_ext_rsp feature_ext_rsp;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 		struct pdu_data_llctrl_pause_enc_req pause_enc_req;
 		struct pdu_data_llctrl_pause_enc_rsp pause_enc_rsp;
 		struct pdu_data_llctrl_version_ind version_ind;
