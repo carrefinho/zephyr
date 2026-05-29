@@ -11,4 +11,7 @@ void ull_central_setup(struct node_rx_pdu *rx, struct node_rx_ftr *ftr,
 void ull_central_ticker_cb(uint32_t ticks_at_expire, uint32_t ticks_drift,
 			  uint32_t remainder, uint16_t lazy, uint8_t force,
 			  void *param);
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+void ull_central_latency_cancel(struct ll_conn *conn, uint16_t handle);
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 uint8_t ull_central_chm_update(void);
