@@ -270,8 +270,16 @@ struct bt_le_per_adv_sync {
 };
 
 struct bt_dev_le {
-	/* LE features */
+	/* LE features (page 0, bits 0-63) */
 	uint8_t			features[8];
+	/* LE features page 1 (bits 64-191), from LE Read All Local Supported
+	 * Features (populated only under CONFIG_BT_LE_EXTENDED_FEAT_SET, else
+	 * stays zero). Page-0 macros keep using features[8]; page-1 feature
+	 * tests (e.g. BT_FEAT_LE_SHORTER_CONN_INTERVALS) read this store.
+	 * Kept unconditional so the IS_ENABLED-gated page-1 feature tests in
+	 * le_set_event_mask()/host-feature setup compile when EFS is disabled.
+	 */
+	uint8_t			features_ext[BT_HCI_LE_BYTES_PER_FEATURE_PAGE];
 	/* LE states */
 	uint64_t			states;
 

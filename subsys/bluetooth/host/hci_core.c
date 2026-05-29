@@ -3216,6 +3216,13 @@ static void read_le_all_supported_features_complete(struct net_buf *buf)
 	LOG_DBG("status 0x%02x %s", rp->status, bt_hci_err_to_str(rp->status));
 
 	memcpy(bt_dev.le.features, rp->features, sizeof(bt_dev.le.features));
+#if defined(CONFIG_BT_LE_EXTENDED_FEAT_SET)
+	/* Store page 1 (bits 64-191) so page-1 feature tests work; the response
+	 * carries all pages back-to-back (rp->features is the full 248-byte field).
+	 */
+	memcpy(bt_dev.le.features_ext, &rp->features[sizeof(bt_dev.le.features)],
+	       sizeof(bt_dev.le.features_ext));
+#endif /* CONFIG_BT_LE_EXTENDED_FEAT_SET */
 }
 
 static int read_le_local_supported_features(void)
@@ -3527,7 +3534,7 @@ static int le_set_event_mask(void)
 		}
 
 		if (IS_ENABLED(CONFIG_BT_SHORTER_CONNECTION_INTERVALS) &&
-		    BT_FEAT_LE_SHORTER_CONN_INTERVALS(bt_dev.le.features)) {
+		    BT_FEAT_LE_SHORTER_CONN_INTERVALS(bt_dev.le.features_ext)) {
 			mask |= BT_EVT_MASK_LE_CONN_RATE_CHANGE;
 		}
 
@@ -3843,7 +3850,7 @@ static int le_init(void)
 	}
 
 	if (IS_ENABLED(CONFIG_BT_SHORTER_CONNECTION_INTERVALS) &&
-	    BT_FEAT_LE_SHORTER_CONN_INTERVALS(bt_dev.le.features)) {
+	    BT_FEAT_LE_SHORTER_CONN_INTERVALS(bt_dev.le.features_ext)) {
 		err = le_set_host_feature(BT_LE_FEAT_BIT_SHORTER_CONN_INTERVALS_HOST_SUPP, 1);
 		if (err != 0) {
 			return err;

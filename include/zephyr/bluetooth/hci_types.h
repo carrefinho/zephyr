@@ -291,10 +291,14 @@ struct bt_hci_cmd_hdr {
 						  BT_LE_FEAT_BIT_EXTENDED_FEAT_SET)
 #define BT_FEAT_LE_FRAME_SPACE_UPDATE_SET(feat)   BT_LE_FEAT_TEST(feat, \
 						  BT_LE_FEAT_BIT_FRAME_SPACE_UPDATE)
+/* Bits 72/73 live on feature page 1; these test a page-1 store (bits 64-191),
+ * so the argument must be the page-1 byte array (e.g. bt_dev.le.features_ext),
+ * not the page-0 features[8].
+ */
 #define BT_FEAT_LE_SHORTER_CONN_INTERVALS(feat)   BT_LE_FEAT_TEST(feat, \
-						  BT_LE_FEAT_BIT_SHORTER_CONN_INTERVALS)
+						  (BT_LE_FEAT_BIT_SHORTER_CONN_INTERVALS - 64))
 #define BT_FEAT_LE_SHORTER_CONN_INTERVALS_HOST_SUPP(feat) BT_LE_FEAT_TEST(feat, \
-						  BT_LE_FEAT_BIT_SHORTER_CONN_INTERVALS_HOST_SUPP)
+						  (BT_LE_FEAT_BIT_SHORTER_CONN_INTERVALS_HOST_SUPP - 64))
 
 #define BT_FEAT_LE_CIS(feat)            (BT_FEAT_LE_CIS_CENTRAL(feat) | \
 					BT_FEAT_LE_CIS_PERIPHERAL(feat))
