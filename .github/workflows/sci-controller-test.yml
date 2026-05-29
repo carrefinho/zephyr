@@ -87,3 +87,10 @@ jobs:
           export ZEPHYR_BASE="${PWD}"
           export EXECUTE_TIMEOUT=180
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_subrate.sh
+
+      - name: Run the Connection Rate coexistence scenario (nRF52 bsim)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=180
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_coex.sh
