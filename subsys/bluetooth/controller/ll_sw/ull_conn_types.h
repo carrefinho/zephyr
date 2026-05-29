@@ -361,6 +361,21 @@ struct node_rx_subrate_change {
 };
 #endif /* CONFIG_BT_CTLR_SUBRATING */
 
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+/* Carrier for the LE Connection Rate Change meta-event (0x37). Like
+ * node_rx_subrate_change but adds the negotiated connection interval (internal
+ * 1.25 ms units; the HCI encoder converts back to 125 us units).
+ */
+struct node_rx_conn_rate_change {
+	uint8_t  status;
+	uint16_t conn_interval;
+	uint16_t subrate_factor;
+	uint16_t peripheral_latency;
+	uint16_t continuation_number;
+	uint16_t supervision_timeout;
+};
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
 #if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
 /* Compact controller-internal carrier for the LE Read All Remote Features
  * Complete meta-event. Only the pages we actually exchange are stored here

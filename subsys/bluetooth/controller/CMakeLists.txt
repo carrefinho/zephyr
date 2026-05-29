@@ -96,6 +96,7 @@ if(CONFIG_BT_CONN)
     ll_sw/ull_llcp_pdu.c
     ll_sw/ull_llcp_conn_upd.c
     ll_sw/ull_llcp_subrate.c
+    ll_sw/ull_llcp_conn_rate.c
     ll_sw/ull_llcp_chmu.c
     ll_sw/ull_llcp_remote.c
     )
