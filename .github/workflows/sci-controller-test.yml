@@ -80,3 +80,10 @@ jobs:
           export ZEPHYR_BASE="${PWD}"
           export EXECUTE_TIMEOUT=120
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci.sh
+
+      - name: Run the Connection Rate + subrating scenario (nRF52 bsim)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=180
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_subrate.sh
