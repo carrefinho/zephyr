@@ -24,7 +24,7 @@ jobs:
   sci-host-compile:
     runs-on: ubuntu-22.04
     container:
-      image: ghcr.io/zephyrproject-rtos/ci:v0.27.4.20241026
+      image: docker.io/zephyrprojectrtos/ci:v0.27.4
       options: "--entrypoint /bin/bash"
     steps:
       - name: Apply container owner mismatch workaround
