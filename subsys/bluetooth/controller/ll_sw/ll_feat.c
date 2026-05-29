@@ -32,10 +32,55 @@
 
 #if defined(CONFIG_BT_CTLR_SET_HOST_FEATURE)
 static uint64_t host_features;
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+/* Host-controlled feature bits on page 1 (bits >= 64), stored page-1-relative
+ * (bit 73 -> bit 9). The page-0 host_features uint64 above cannot hold them.
+ */
+static uint64_t host_features_page1;
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
+/* True if the Controller has an established ACL; LE Set Host Feature is
+ * disallowed while connected.
+ */
+static bool ll_feat_acl_established(void)
+{
+#if defined(CONFIG_BT_CONN)
+	uint16_t conn_free_count = ll_conn_free_count_get();
+
+	/* Check if any connection contexts where allocated */
+	if (conn_free_count != CONFIG_BT_MAX_CONN) {
+		for (uint16_t handle = 0U; handle < CONFIG_BT_MAX_CONN; handle++) {
+			if (ll_connected_get(handle)) {
+				return true;
+			}
+		}
+	}
+#endif /* CONFIG_BT_CONN */
+	return false;
+}
 
 uint8_t ll_set_host_feature(uint8_t bit_number, uint8_t bit_value)
 {
 	uint64_t feature;
+
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	/* Bit 73 (SCI Host Support) is on feature page 1; BIT64(73) would
+	 * overflow the page-0 uint64 path below, so handle it separately.
+	 */
+	if (bit_number == BT_LE_FEAT_BIT_SHORTER_CONN_INTERVALS_HOST_SUPP) {
+		if (ll_feat_acl_established()) {
+			return BT_HCI_ERR_CMD_DISALLOWED;
+		}
+
+		if (bit_value) {
+			host_features_page1 |= BIT64(bit_number - 64U);
+		} else {
+			host_features_page1 &= ~BIT64(bit_number - 64U);
+		}
+
+		return BT_HCI_ERR_SUCCESS;
+	}
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
 	/* Check if Bit_Number is not controlled by the Host */
 	feature = BIT64(bit_number);
@@ -43,22 +88,9 @@ uint8_t ll_set_host_feature(uint8_t bit_number, uint8_t bit_value)
 		return BT_HCI_ERR_UNSUPP_FEATURE_PARAM_VAL;
 	}
 
-#if defined(CONFIG_BT_CONN)
-	/* Check if the Controller has an established ACL */
-	uint16_t conn_free_count = ll_conn_free_count_get();
-
-	/* Check if any connection contexts where allocated */
-	if (conn_free_count != CONFIG_BT_MAX_CONN) {
-		uint16_t handle;
-
-		/* Check if there are established connections */
-		for (handle = 0U; handle < CONFIG_BT_MAX_CONN; handle++) {
-			if (ll_connected_get(handle)) {
-				return BT_HCI_ERR_CMD_DISALLOWED;
-			}
-		}
+	if (ll_feat_acl_established()) {
+		return BT_HCI_ERR_CMD_DISALLOWED;
 	}
-#endif /* CONFIG_BT_CONN */
 
 	/* Set or Clear the Host feature bit */
 	if (bit_value) {
@@ -73,6 +105,9 @@ uint8_t ll_set_host_feature(uint8_t bit_number, uint8_t bit_value)
 void ll_feat_reset(void)
 {
 	host_features = 0U;
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	host_features_page1 = 0U;
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 }
 
 uint64_t ll_feat_get(void)
@@ -100,10 +135,19 @@ void ll_feat_get_page(uint8_t page, uint8_t *out)
 
 	switch (page) {
 	case 1:
-		/* No page-1 feature bits supported yet. As bits are added,
-		 * set them here, e.g. for feature bit BIT (>= 64):
-		 *   out[(BIT - 64) / 8] |= BIT((BIT) & 7);
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+		/* Bit 72: Shorter Connection Intervals (controller capability). */
+		out[(BT_LE_FEAT_BIT_SHORTER_CONN_INTERVALS - 64) / 8] |=
+			BIT(BT_LE_FEAT_BIT_SHORTER_CONN_INTERVALS & 7);
+		/* Bit 73: SCI Host Support, advertised only if the local host
+		 * enabled it via LE Set Host Feature.
 		 */
+		if (host_features_page1 &
+		    BIT64(BT_LE_FEAT_BIT_SHORTER_CONN_INTERVALS_HOST_SUPP - 64U)) {
+			out[(BT_LE_FEAT_BIT_SHORTER_CONN_INTERVALS_HOST_SUPP - 64) / 8] |=
+				BIT(BT_LE_FEAT_BIT_SHORTER_CONN_INTERVALS_HOST_SUPP & 7);
+		}
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 		break;
 	default:
 		/* Unsupported page, leave all-zero */

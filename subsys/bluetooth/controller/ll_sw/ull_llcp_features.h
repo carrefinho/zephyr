@@ -202,6 +202,27 @@ static inline bool feature_peer_subrate_host(struct ll_conn *conn)
 }
 #endif /* CONFIG_BT_CTLR_SUBRATING */
 
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+/* Shorter Connection Intervals feature bits (72/73) live on the peer's feature
+ * page 1, valid only once the Feature Page Exchange procedure has populated it
+ * (ext_valid set, max_page_peer >= 1). Read the raw page-1 octet slice, NOT the
+ * page-0 uint64 features_peer.
+ */
+static inline bool feature_peer_sci(struct ll_conn *conn)
+{
+	return conn->llcp.fex.ext_valid && (conn->llcp.fex.max_page_peer >= 1U) &&
+	       (conn->llcp.fex.features_peer_ext[(BT_LE_FEAT_BIT_SHORTER_CONN_INTERVALS - 64) / 8] &
+		BIT(BT_LE_FEAT_BIT_SHORTER_CONN_INTERVALS & 7)) != 0U;
+}
+
+static inline bool feature_peer_sci_host(struct ll_conn *conn)
+{
+	return conn->llcp.fex.ext_valid && (conn->llcp.fex.max_page_peer >= 1U) &&
+	       (conn->llcp.fex.features_peer_ext[(BT_LE_FEAT_BIT_SHORTER_CONN_INTERVALS_HOST_SUPP - 64) / 8] &
+		BIT(BT_LE_FEAT_BIT_SHORTER_CONN_INTERVALS_HOST_SUPP & 7)) != 0U;
+}
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
 /*
  * The following features are not yet defined in KConfig and do
  * not have a bitfield defined in ll_feat.h
