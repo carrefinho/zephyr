@@ -380,9 +380,15 @@ static void lp_cr_check_instant(struct ll_conn *conn, struct proc_ctx *ctx)
 #if defined(CONFIG_BT_PERIPHERAL)
 static void lp_cr_send_conn_rate_req(struct ll_conn *conn, struct proc_ctx *ctx)
 {
-	if (llcp_lr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
+	/* Like the local Connection Parameter Request: claim the interval-change
+	 * collision slot and mark a local instant-procedure as pending.
+	 */
+	if (CONN_RATE_CPR_ACTIVE(conn) || llcp_lr_ispaused(conn) ||
+	    !llcp_tx_alloc_peek(conn, ctx)) {
 		ctx->state = LP_CR_STATE_WAIT_TX_CONN_RATE_REQ;
 	} else {
+		llcp_rr_set_incompat(conn, INCOMPAT_RESOLVABLE);
+		CONN_RATE_CPR_SET(conn);
 		lp_cr_tx(conn, ctx, PDU_DATA_LLCTRL_TYPE_CONN_RATE_REQ);
 		ctx->rx_opcode = PDU_DATA_LLCTRL_TYPE_CONN_RATE_IND;
 		ctx->state = LP_CR_STATE_WAIT_RX_CONN_RATE_IND;
