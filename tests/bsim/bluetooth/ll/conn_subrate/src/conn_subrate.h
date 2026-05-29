@@ -24,17 +24,17 @@
  */
 #define ECV_LOWLAT_UNIT_US      125U
 #define ECV_US_TO_LL_UNITS(_us) ((uint16_t)((_us) / ECV_LOWLAT_UNIT_US - 1U))
-/* The go/no-go gate band, swept descending. The low-latency path only engages for
- * units < BT_HCI_LE_INTERVAL_MIN (6), i.e. <= 6*125 = 750 us at this unit -- higher
+/* Swept descending to FIND the floor. The low-latency path only engages for units
+ * < BT_HCI_LE_INTERVAL_MIN (6), i.e. <= 6*125 = 750 us at this unit -- higher
  * intervals escape to the 1250 us grid (full reservation), so 750 us is the top.
- * Capped at 625 us at the bottom: probing lower trips a PERIPHERAL controller
- * assertion -- ull_event_done_extra_get() returns NULL (done-extra pool exhaustion,
- * lll_conn.c:282/1024) below ~625 us on nRF54L / ~375 us on nRF52 -- which crashes
- * the sim rather than degrading gracefully. That assert-enforced floor is the
- * mechanism, and it is partly buffer-bound: raising BT_CTLR_RX_BUFFERS is the
- * step-2 lever to test whether the scheduler itself holds lower. 750 = the eval's
- * safe ECV floor (the gate); 625 = the stretch goal, also validated to hold. */
-#define ECV_SWEEP_US_LIST       { 750U, 625U }
+ * Earlier runs showed the band {750,625} holds at default sizing but stepping
+ * lower trips a PERIPHERAL assert -- ull_event_done_extra_get() returns NULL
+ * (done-extra pool exhaustion, lll_conn.c:282/1024). The overlay now raises
+ * BT_CTLR_EVENT_DONE_MAX so the wide sweep can degrade gracefully: if cadence
+ * collapses (harness reports the floor) the floor was scheduling-bound; if a
+ * bigger pool lets it hold lower, the floor was pool-bound. 750 = the eval's safe
+ * ECV floor (the gate); 625 = stretch; 500/375(spec floor)/250 probe below. */
+#define ECV_SWEEP_US_LIST       { 750U, 625U, 500U, 375U, 250U }
 #define ECV_COUNT_WINDOW_MS     2000  /* per-interval cadence measurement window */
 #define ECV_SETTLE_MS           1000  /* let each interval update take effect on air */
 #define ECV_HOLD_PCT            75U   /* >= this cadence == anchor held at this interval */

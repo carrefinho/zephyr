@@ -369,7 +369,12 @@ static MFIFO_DEFINE(prep, sizeof(struct lll_event), EVENT_PIPELINE_MAX);
  * prepare could be enqueued in the pipeline during the preemption duration.
  */
 #if !defined(VENDOR_EVENT_DONE_MAX)
-#if defined(CONFIG_BT_CTLR_ADV_EXT) && defined(CONFIG_BT_OBSERVER)
+#if defined(CONFIG_BT_CTLR_EVENT_DONE_MAX) && (CONFIG_BT_CTLR_EVENT_DONE_MAX > 0)
+/* Kconfig override (0 = auto): lets a build raise the done-extra pool to probe
+ * whether a sub-1.25ms low-latency floor is pool-bound vs scheduler-bound.
+ */
+#define EVENT_DONE_MAX CONFIG_BT_CTLR_EVENT_DONE_MAX
+#elif defined(CONFIG_BT_CTLR_ADV_EXT) && defined(CONFIG_BT_OBSERVER)
 #if defined(CONFIG_BT_CTLR_PHY_CODED)
 #define EVENT_DONE_MAX 6
 #else /* !CONFIG_BT_CTLR_PHY_CODED */

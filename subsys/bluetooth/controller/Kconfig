@@ -256,6 +256,17 @@ config BT_CTLR_RX_BUFFERS
 	  connection interval and 2M PHY, maximum 18 packets with L2CAP payload
 	  size of 1 byte can be received.
 
+config BT_CTLR_EVENT_DONE_MAX
+	int "Maximum number of event-done entries (0 = auto)"
+	depends on BT_LL_SW_SPLIT
+	default 0
+	help
+	  Size of the mfifo_done pool (struct node_rx_event_done), drawn by
+	  ull_event_done_extra_get() once per radio event. 0 keeps the auto-computed
+	  default (4-6, per ADV_EXT/OBSERVER/PHY_CODED). Raise it to probe whether a
+	  sub-1.25ms low-latency connection floor is bounded by this pool (done-extra
+	  exhaustion -> LL_ASSERT in lll_conn.c) rather than by the scheduler itself.
+
 config BT_CTLR_ISO_RX_BUFFERS
 	int "Number of Isochronous Rx buffers"
 	depends on BT_CTLR_SYNC_ISO || BT_CTLR_CONN_ISO

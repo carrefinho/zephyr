@@ -830,12 +830,13 @@ static void test_central_main_multi(void)
  * sweep tops out at 750 us. The question: can the LL_SW scheduler hold a
  * sub-1.25 ms anchor under a concurrent full-rate link on nRF54L (single timer)?
  * This exercises the reduced-reservation + is_abort_cb path with the low-lat 52 us
- * tIFS (the FSU-equivalent regime). The sweep is capped at 625 us at the bottom
- * (see conn_subrate.h): below ~625 us on nRF54L the controller asserts on
- * done-extra pool exhaustion rather than degrading gracefully, so going lower
- * would crash the sim. The go/no-go gate is the 750 us safe floor holding; the
- * harness still detects a graceful break/floor for any wider sweep used later
- * (e.g. with raised BT_CTLR_RX_BUFFERS to probe whether the floor is buffer-bound).
+ * tIFS (the FSU-equivalent regime). The sweep descends across {750..250} us to
+ * FIND the floor; the overlay raises BT_CTLR_EVENT_DONE_MAX so going below the
+ * default-pool floor (~625 us nRF54L) degrades gracefully (cadence collapse ->
+ * harness reports the floor) instead of asserting on done-extra exhaustion. If a
+ * bigger pool now holds lower, the floor was pool-bound; if cadence still
+ * collapses, it is scheduling-bound. The go/no-go gate stays the 750 us safe
+ * floor holding -- breaks below it are the informational measured floor.
  */
 static void test_central_main_ecv_sweep(void)
 {
