@@ -29,6 +29,14 @@ void ll_feat_get_page(uint8_t page, uint8_t *out);
 uint8_t ll_feat_local_max_page(void);
 #endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+/* True if the local Host has set the Shorter Connection Intervals (Host Support)
+ * feature bit 73 via LE Set Host Feature. A Peripheral must not initiate the
+ * Connection Rate Request procedure unless this is set (Core 6.2, 5.1.33).
+ */
+bool ll_feat_sci_host_supported(void);
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
 /* Device Address Interfaces */
 uint8_t ll_addr_set(uint8_t addr_type, uint8_t const *const p_bdaddr);
 uint8_t *ll_addr_get(uint8_t addr_type);

@@ -145,6 +145,17 @@ uint8_t ull_cp_subrate_req(struct ll_conn *conn, uint16_t subrate_min, uint16_t 
 			   uint16_t max_latency, uint16_t continuation_number, uint16_t timeout);
 #endif /* CONFIG_BT_CTLR_SUBRATING */
 
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+/**
+ * @brief Initiate a Connection Rate Update (Central, 5.1.32) or Connection Rate
+ *        Request (Peripheral, 5.1.33) procedure. interval_min/max are in internal
+ *        1.25 ms units (the HCI layer applies the RCV grid check + /10 conversion).
+ */
+uint8_t ull_cp_conn_rate_req(struct ll_conn *conn, uint16_t interval_min, uint16_t interval_max,
+			     uint16_t subrate_min, uint16_t subrate_max, uint16_t max_latency,
+			     uint16_t continuation_number, uint16_t timeout);
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
 /**
  * @brief Accept the remote device’s request to change connection parameters.
  */

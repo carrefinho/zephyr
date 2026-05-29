@@ -621,8 +621,10 @@ void llcp_lp_conn_rate_run(struct ll_conn *conn, struct proc_ctx *ctx, void *par
 static void rp_cr_complete(struct ll_conn *conn, struct proc_ctx *ctx)
 {
 	llcp_rr_prt_stop(conn);
+	/* Release the interval-change slot we claimed; the local incompat is not
+	 * ours to clear (remote procedure).
+	 */
 	CONN_RATE_CPR_RESET(conn);
-	llcp_rr_set_incompat(conn, INCOMPAT_NO_COLLISION);
 	llcp_rr_complete(conn);
 	ctx->state = RP_CR_STATE_IDLE;
 }
@@ -692,10 +694,13 @@ static void rp_cr_send_reject_ext_ind(struct ll_conn *conn, struct proc_ctx *ctx
 
 static void rp_cr_send_conn_rate_ind(struct ll_conn *conn, struct proc_ctx *ctx)
 {
+	/* Remote procedure: the collision arbiter (rr_st_idle) already decided to
+	 * run us; we only claim the interval-change slot (cpr_active), we do NOT
+	 * set the local incompat (that is the local procedure's signal).
+	 */
 	if (CONN_RATE_CPR_ACTIVE(conn) || llcp_rr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
 		ctx->state = RP_CR_STATE_WAIT_TX_CONN_RATE_IND;
 	} else {
-		llcp_rr_set_incompat(conn, INCOMPAT_RESOLVABLE);
 		CONN_RATE_CPR_SET(conn);
 		conn_rate_ind_params_calc(conn, ctx);
 		rp_cr_tx(conn, ctx, PDU_DATA_LLCTRL_TYPE_CONN_RATE_IND);
