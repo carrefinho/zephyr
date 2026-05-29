@@ -8675,6 +8675,37 @@ static void le_subrate_change_event(struct pdu_data *pdu_data, uint16_t handle,
 }
 #endif /* CONFIG_BT_CTLR_SUBRATING */
 
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+static void le_conn_rate_change_event(struct pdu_data *pdu_data, uint16_t handle,
+				      struct net_buf *buf)
+{
+	struct bt_hci_evt_le_conn_rate_change *sep;
+	struct node_rx_conn_rate_change *cr;
+	void *node;
+
+	if (!(event_mask & BT_EVT_MASK_LE_META_EVENT) ||
+	    !(le_event_mask & BT_EVT_MASK_LE_CONN_RATE_CHANGE)) {
+		return;
+	}
+
+	sep = meta_evt(buf, BT_HCI_EVT_LE_CONN_RATE_CHANGE, sizeof(*sep));
+
+	/* Check for pdu field being aligned before accessing conn rate change event. */
+	node = pdu_data;
+	LL_ASSERT(IS_PTR_ALIGNED(node, struct node_rx_conn_rate_change));
+
+	cr = node;
+	sep->status = cr->status;
+	sep->handle = sys_cpu_to_le16(handle);
+	/* Internal 1.25 ms units -> 125 us units on the HCI event */
+	sep->conn_interval = sys_cpu_to_le16(cr->conn_interval * 10U);
+	sep->subrate_factor = sys_cpu_to_le16(cr->subrate_factor);
+	sep->peripheral_latency = sys_cpu_to_le16(cr->peripheral_latency);
+	sep->continuation_number = sys_cpu_to_le16(cr->continuation_number);
+	sep->supervision_timeout = sys_cpu_to_le16(cr->supervision_timeout);
+}
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
 #if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
 static void le_read_all_remote_feat_complete(struct pdu_data *pdu_data, uint16_t handle,
 					     struct net_buf *buf)
@@ -8961,6 +8992,12 @@ static void encode_control(struct node_rx_pdu *node_rx,
 		le_subrate_change_event(pdu_data, handle, buf);
 		break;
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	case NODE_RX_TYPE_CONN_RATE_CHANGE:
+		le_conn_rate_change_event(pdu_data, handle, buf);
+		break;
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
 #if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
 	case NODE_RX_TYPE_READ_ALL_REMOTE_FEAT_COMPLETE:
@@ -9492,6 +9529,10 @@ uint8_t hci_get_class(struct node_rx_pdu *node_rx)
 #if defined(CONFIG_BT_CTLR_SUBRATING)
 		case NODE_RX_TYPE_SUBRATE_CHANGE:
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+		case NODE_RX_TYPE_CONN_RATE_CHANGE:
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
 #if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
 		case NODE_RX_TYPE_READ_ALL_REMOTE_FEAT_COMPLETE:
