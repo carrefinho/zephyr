@@ -1166,6 +1166,140 @@ static void test_central_main_cwrite(void)
 	bs_trace_silent_exit(0);
 }
 
+#if defined(CONFIG_BT_LE_EXTENDED_FEAT_SET)
+/* LL Extended Feature Set (Feature Page Exchange) end-to-end check. The central
+ * connects to a single peripheral, then issues an LE Read All Remote Features
+ * (HCI 0x2088) for page 1. The completion (meta-event subevent 0x2B) carries the
+ * peer's 248-octet feature field plus max_remote_page / max_valid_page. Since
+ * page 1 currently carries no feature bits (ll_feat_local_max_page() == 0), the
+ * peer returns page 0 + an all-zero page 1 with max page 0. Asserting that the
+ * page-0 octets came through non-zero (the peer's real features) while page 1 is
+ * zero proves the procedure ran, the link survived, and the 248-octet carrier
+ * was populated from the peer without corruption.
+ */
+static volatile bool efs_complete;
+static volatile uint8_t efs_status;
+static volatile uint8_t efs_max_remote_page;
+static volatile uint8_t efs_max_valid_page;
+static uint8_t efs_features[248];
+
+static void efs_read_all_remote_feat_complete(
+	struct bt_conn *conn,
+	const struct bt_conn_le_read_all_remote_feat_complete *params)
+{
+	efs_status = params->status;
+	efs_max_remote_page = params->max_remote_page;
+	efs_max_valid_page = params->max_valid_page;
+	if (params->status == BT_HCI_ERR_SUCCESS && params->features != NULL) {
+		memcpy(efs_features, params->features, sizeof(efs_features));
+	}
+	efs_complete = true;
+	printk("Central read-all-remote-features complete: status 0x%02x "
+	       "max_remote_page %u max_valid_page %u\n", params->status,
+	       params->max_remote_page, params->max_valid_page);
+}
+
+static struct bt_conn_cb efs_conn_callbacks = {
+	.connected = connected,
+	.disconnected = disconnected,
+	.read_all_remote_feat_complete = efs_read_all_remote_feat_complete,
+};
+
+static void test_central_main_efs(void)
+{
+	bool page0_nonzero = false;
+	bool page1_zero = true;
+	int err;
+	int i;
+
+	bt_conn_cb_register(&efs_conn_callbacks);
+
+	err = bt_enable(NULL);
+	if (err) {
+		FAIL("Bluetooth init failed (err %d)\n", err);
+		return;
+	}
+	printk("Central Bluetooth initialized (EFS)\n");
+
+	err = bt_le_scan_start(BT_LE_SCAN_ACTIVE, device_found);
+	if (err) {
+		FAIL("Scanning failed to start (err %d)\n", err);
+		return;
+	}
+
+	SUBRATE_WAIT(central_connected && default_conn);
+
+	/* Let the connection (and any autonomous feature exchange) settle. */
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	err = bt_conn_le_read_all_remote_features(default_conn, 1U);
+	if (err) {
+		FAIL("Central read-all-remote-features request failed (err %d)\n", err);
+		return;
+	}
+	printk("Central requested all remote features (1 page)\n");
+
+	/* Wait for the completion, mirroring SUBRATE_WAIT. */
+	SUBRATE_WAIT(efs_complete);
+
+	if (efs_status != BT_HCI_ERR_SUCCESS) {
+		FAIL("Read-all-remote-features completed with status 0x%02x\n",
+		     efs_status);
+		return;
+	}
+	/* The link must not have dropped during the procedure. */
+	if (!central_connected || !default_conn) {
+		FAIL("Link dropped during the feature page exchange\n");
+		return;
+	}
+
+	/* Page 0 occupies octets 0..7; the peer has page-0 features, so the
+	 * carrier must be non-zero -> the 248-octet field was really populated.
+	 */
+	for (i = 0; i < BT_HCI_LE_BYTES_PAGE_0_FEATURE_PAGE; i++) {
+		if (efs_features[i] != 0U) {
+			page0_nonzero = true;
+			break;
+		}
+	}
+	/* Page 1 occupies octets 8..31; no page-1 bits are implemented yet, so it
+	 * must be all-zero and the reported max pages must be 0.
+	 */
+	for (i = BT_HCI_LE_BYTES_PAGE_0_FEATURE_PAGE;
+	     i < BT_HCI_LE_BYTES_PAGE_0_FEATURE_PAGE + BT_HCI_LE_BYTES_PER_FEATURE_PAGE;
+	     i++) {
+		if (efs_features[i] != 0U) {
+			page1_zero = false;
+			break;
+		}
+	}
+
+	if (!page0_nonzero) {
+		FAIL("Page-0 features all zero: 248-octet carrier not populated\n");
+		return;
+	}
+	if (!page1_zero) {
+		FAIL("Page-1 octets non-zero but no page-1 bits are implemented\n");
+		return;
+	}
+	if (efs_max_remote_page != 0U || efs_max_valid_page != 0U) {
+		FAIL("Unexpected max pages: remote %u valid %u (expected 0/0)\n",
+		     efs_max_remote_page, efs_max_valid_page);
+		return;
+	}
+
+	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	printk("Central EFS page0 octets: %02x %02x %02x %02x %02x %02x %02x %02x, "
+	       "max_remote_page %u max_valid_page %u\n",
+	       efs_features[0], efs_features[1], efs_features[2], efs_features[3],
+	       efs_features[4], efs_features[5], efs_features[6], efs_features[7],
+	       efs_max_remote_page, efs_max_valid_page);
+	PASS("Central feature page exchange validated (page0 populated, page1 zero, "
+	     "max page 0)\n");
+	bs_trace_silent_exit(0);
+}
+#endif /* CONFIG_BT_LE_EXTENDED_FEAT_SET */
+
 static void test_central_init(void)
 {
 	bst_ticker_set_next_tick_absolute(WAIT_TIME * 1e6);
@@ -1286,6 +1420,17 @@ static const struct bst_test_instance test_central[] = {
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_cwrite,
 	},
+#if defined(CONFIG_BT_LE_EXTENDED_FEAT_SET)
+	{
+		.test_id = "central_efs",
+		.test_descr = "Central: LL Extended Feature Set - read all remote "
+			      "features (page 1); the page-1 exchange completes, the "
+			      "link survives, page 0 is populated and page 1 is zero.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_efs,
+	},
+#endif
 	BSTEST_END_MARKER,
 };
 

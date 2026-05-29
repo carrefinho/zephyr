@@ -115,3 +115,10 @@ jobs:
           conf_overlay="${ZEPHYR_BASE}/tests/bsim/bluetooth/ll/conn_subrate/overlay-efs.conf" \
             app=tests/bsim/bluetooth/ll/conn_subrate compile
           wait_for_background_jobs
+
+      - name: Run Feature Page Exchange scenario (nRF52 bsim)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=120
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_efs.sh
