@@ -1,0 +1,71 @@
+# CI for the Shorter Connection Intervals (SCI) host backport.
+#
+# Compile-checks the backported host SCI code (cherry-picks of upstream
+# c0337262a12 / ac1fc40ae00 / 89fb42a79f5, PR #98901) via the upstream-provided
+# twister scenario `bluetooth.shell.shorter_connection_intervals` (build_only,
+# BT_LL_SW_SPLIT=n, so host-only: it compiles the host SCI path + the new bt
+# shell SCI commands without needing controller support, which is greenfield).
+# native_sim => fast host build, no SDK cross-compile.
+#
+# SCI host depends on the EFS host backport (BT_LE_EXTENDED_FEAT_SET) and the
+# subrating port (BT_SUBRATING), both already on this branch. The "Subrating
+# Tests" and "Extended Feature Set Backport" workflows run in parallel as
+# regression checks (SCI #if'd out): they catch breakage in the always-compiled
+# additions (the interval->interval_us change, feature-bit defines, Kconfig).
+name: Shorter Connection Intervals Backport
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+jobs:
+  sci-host-compile:
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/zephyrproject-rtos/ci-repo-cache:v0.27.4.20241026
+      options: "--entrypoint /bin/bash"
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Clone cached Zephyr repository (speeds up checkout/update)
+        continue-on-error: true
+        run: |
+          git clone --shared /repo-cache/zephyrproject/zephyr .
+          git remote set-url origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: West init + update
+        run: |
+          west init -l . || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update --path-cache /repo-cache/zephyrproject 1> west.update.log 2>&1 \
+            || west update 1> west.update.log 2>&1
+          west forall -c 'git reset --hard HEAD'
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
+
+      - name: Build host Shorter Connection Intervals (twister, native_sim, build-only)
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export ZEPHYR_TOOLCHAIN_VARIANT=zephyr
+          ./scripts/twister -p native_sim \
+            -T tests/bluetooth/shell -s bluetooth.shell.shorter_connection_intervals \
+            --inline-logs -v -N --no-detailed-test-id
+
+      - name: Upload twister output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sci-twister-out
+          path: |
+            twister-out/twister.log
+            twister-out/**/build.log
+          if-no-files-found: ignore
