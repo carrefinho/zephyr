@@ -238,8 +238,6 @@ static void conn_rate_ind_params_calc(struct ll_conn *conn, struct proc_ctx *ctx
 	/* No anchor-point move for RCV */
 	ctx->data.conn_rate.win_size = 1U;
 	ctx->data.conn_rate.win_offset_us = 0U;
-	ctx->data.conn_rate.subrate_base_event =
-		ull_conn_event_counter(conn) + CONN_RATE_INSTANT_DELTA;
 	ctx->data.conn_rate.instant =
 		ull_conn_event_counter(conn) + conn->lll.latency + CONN_RATE_INSTANT_DELTA;
 }
@@ -255,7 +253,20 @@ static void conn_rate_ind_params_calc(struct ll_conn *conn, struct proc_ctx *ctx
 static void conn_rate_apply(struct ll_conn *conn, struct proc_ctx *ctx)
 {
 	uint16_t factor = ctx->data.conn_rate.subrate_factor;
-	uint16_t base_event = ctx->data.conn_rate.subrate_base_event;
+	/* Core 6.2 5.1.32: at the instant, connSubrateBaseEvent is set to the Instant
+	 * carried in LL_CONNECTION_RATE_IND. Both roles share that Instant (the Central
+	 * computed it, the Peripheral decoded it), so deriving base_event from it keeps
+	 * the subrated-event phase identical on both ends. (The IND carries no separate
+	 * base-event field, per Fig 2.78.)
+	 */
+	uint16_t base_event = ctx->data.conn_rate.instant;
+
+	/* Mark this as an RCV link so the interval-unit / tIFS branches in
+	 * ull_conn.c treat the (possibly sub-7.5 ms) interval as 1.25 ms-grid with
+	 * 150 us tIFS, not as a proprietary 500 us-unit low-latency interval. Must
+	 * be set BEFORE ull_conn_update_parameters reads the new interval.
+	 */
+	conn->lll.rcv = 1U;
 
 	/* Change the connection interval at the instant (is_cu_proc=true: this is
 	 * an explicit Host/peer-driven update, not an internal one). This sets
@@ -384,7 +395,7 @@ static void lp_cr_send_conn_rate_req(struct ll_conn *conn, struct proc_ctx *ctx)
 	 * collision slot and mark a local instant-procedure as pending.
 	 */
 	if (CONN_RATE_CPR_ACTIVE(conn) || llcp_lr_ispaused(conn) ||
-	    !llcp_tx_alloc_peek(conn, ctx)) {
+	    llcp_rr_get_collision(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
 		ctx->state = LP_CR_STATE_WAIT_TX_CONN_RATE_REQ;
 	} else {
 		llcp_rr_set_incompat(conn, INCOMPAT_RESOLVABLE);
@@ -403,7 +414,7 @@ static void lp_cr_send_conn_rate_ind(struct ll_conn *conn, struct proc_ctx *ctx)
 	 * Request (both touch the connection interval at an instant).
 	 */
 	if (CONN_RATE_CPR_ACTIVE(conn) || llcp_lr_ispaused(conn) ||
-	    !llcp_tx_alloc_peek(conn, ctx)) {
+	    llcp_rr_get_collision(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
 		ctx->state = LP_CR_STATE_WAIT_TX_CONN_RATE_IND;
 	} else {
 		llcp_rr_set_incompat(conn, INCOMPAT_RESOLVABLE);
@@ -718,10 +729,11 @@ static void rp_cr_st_wait_rx_conn_rate_req(struct ll_conn *conn, struct proc_ctx
 		if (ctx->data.conn_rate.error != BT_HCI_ERR_SUCCESS) {
 			/* Out-of-range / ECV interval in the REQ */
 			rp_cr_send_reject_ext_ind(conn, ctx);
-		} else if (!feature_peer_sci_host(conn)) {
-			/* Core 6.2 5.1.33: the Central shall reject a Peripheral
-			 * request if the Peripheral's Host has not set the SCI
-			 * (Host Support) bit.
+		} else if (!ll_feat_sci_host_supported()) {
+			/* Core 6.2 5.1.33 -> 5.1.20: the Central shall reject a
+			 * Peripheral request if its OWN Host has not set the SCI
+			 * (Host Support) bit. (Checking the peer's bit would also wrongly
+			 * require the page-1 exchange to have completed first.)
 			 */
 			ctx->data.conn_rate.error = BT_HCI_ERR_UNSUPP_REMOTE_FEATURE;
 			rp_cr_send_reject_ext_ind(conn, ctx);
