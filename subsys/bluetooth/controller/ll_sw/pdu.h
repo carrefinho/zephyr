@@ -628,6 +628,8 @@ enum pdu_data_llctrl_type {
 	PDU_DATA_LLCTRL_TYPE_SUBRATE_IND = 0x27,
 	PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_REQ = 0x2B,
 	PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_RSP = 0x2C,
+	PDU_DATA_LLCTRL_TYPE_CONN_RATE_REQ = 0x3E,
+	PDU_DATA_LLCTRL_TYPE_CONN_RATE_IND = 0x3F,
 	PDU_DATA_LLCTRL_TYPE_UNUSED = 0xFF
 };
 
@@ -933,6 +935,41 @@ struct pdu_data_llctrl_subrate_ind {
 	uint16_t timeout;
 } __packed;
 
+/* LL_CONNECTION_RATE_REQ, Core Spec v6.2 Vol 6, Part B, Section 2.4.2.57.
+ * Interval_Min/Max are in 125 us units; RCV (this controller) accepts only
+ * multiples of 10 (1250 us grid). 26-octet CtrData.
+ */
+struct pdu_data_llctrl_conn_rate_req {
+	uint16_t interval_min;
+	uint16_t interval_max;
+	uint16_t subrate_factor_min;
+	uint16_t subrate_factor_max;
+	uint16_t max_latency;
+	uint16_t continuation_number;
+	uint16_t timeout;
+	uint16_t preferred_periodicity;
+	uint16_t reference_conn_event_count;
+	uint16_t offset0;
+	uint16_t offset1;
+	uint16_t offset2;
+	uint16_t offset3;
+} __packed;
+
+/* LL_CONNECTION_RATE_IND, Core Spec v6.2 Vol 6, Part B, Section 2.4.2.58.
+ * WinOffset/Interval are in 125 us units; carries the Instant at which the new
+ * connection interval takes effect (unlike LL_SUBRATE_IND). 14-octet CtrData;
+ * no WinSize and no SubrateBaseEvent on the wire.
+ */
+struct pdu_data_llctrl_conn_rate_ind {
+	uint16_t win_offset;
+	uint16_t interval;
+	uint16_t instant;
+	uint16_t subrate_factor;
+	uint16_t latency;
+	uint16_t continuation_number;
+	uint16_t timeout;
+} __packed;
+
 struct pdu_data_llctrl_periodic_sync_ind {
 	uint16_t id;
 	struct pdu_adv_sync_info sync_info;
@@ -995,12 +1032,33 @@ struct pdu_data_llctrl {
 		struct pdu_data_llctrl_cis_terminate_ind cis_terminate_ind;
 		struct pdu_data_llctrl_subrate_req subrate_req;
 		struct pdu_data_llctrl_subrate_ind subrate_ind;
+		struct pdu_data_llctrl_conn_rate_req conn_rate_req;
+		struct pdu_data_llctrl_conn_rate_ind conn_rate_ind;
 		struct pdu_data_llctrl_periodic_sync_ind periodic_sync_ind;
 	} __packed;
 } __packed;
 
 #define PDU_DATA_LLCTRL_LEN(type) (offsetof(struct pdu_data_llctrl, type) + \
 				   sizeof(struct pdu_data_llctrl_ ## type))
+
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+/* The fused LL_CONNECTION_RATE_REQ has a 26-octet CtrData, which may exceed the
+ * control-PDU size selected by the cascade above (e.g. conn_param_req is only
+ * 23). Widen the TX/RX limits to fit it. The cascade values are captured as
+ * enum constants first (the union is now complete, so PDU_DATA_LLCTRL_LEN is
+ * usable here) to avoid a self-referential macro redefinition.
+ */
+enum {
+	PDU_DC_CTRL_TX_SIZE_BASE = PDU_DC_CTRL_TX_SIZE_MAX,
+	PDU_DC_CTRL_RX_SIZE_BASE = PDU_DC_CTRL_RX_SIZE_MAX,
+};
+#undef PDU_DC_CTRL_TX_SIZE_MAX
+#undef PDU_DC_CTRL_RX_SIZE_MAX
+#define PDU_DC_CTRL_TX_SIZE_MAX \
+	MAX(PDU_DC_CTRL_TX_SIZE_BASE, PDU_DATA_LLCTRL_LEN(conn_rate_req))
+#define PDU_DC_CTRL_RX_SIZE_MAX \
+	MAX(PDU_DC_CTRL_RX_SIZE_BASE, PDU_DATA_LLCTRL_LEN(conn_rate_req))
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
 #if defined(CONFIG_BT_CTLR_PROFILE_ISR)
 struct profile {
