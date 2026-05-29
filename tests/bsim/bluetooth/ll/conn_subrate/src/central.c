@@ -1330,6 +1330,16 @@ static struct bt_conn_cb sci_conn_callbacks = {
 	.conn_rate_changed = sci_conn_rate_changed,
 };
 
+/* For the multi-link coexistence test: central_init_multi already registers
+ * conn_callbacks (multi `connected` counts m_nconns), so this second registered
+ * cb only adds the SCI-specific events. The fork's bt_conn_cb_register appends to
+ * a list, so both fire.
+ */
+static struct bt_conn_cb sci_extra_callbacks = {
+	.read_all_remote_feat_complete = efs_read_all_remote_feat_complete,
+	.conn_rate_changed = sci_conn_rate_changed,
+};
+
 /* RCV-tier Shorter Connection Intervals end-to-end: a Central drives the link to
  * a 1.25 ms connection interval via the Connection Rate Update procedure and
  * verifies the host sees the change (0x37 event) with interval_us == 1250 and the
@@ -1575,6 +1585,105 @@ static void test_central_main_sci_subrate(void)
 	PASS("Central SCI subrate test passed: factor %u on a 1.25 ms link, link held\n",
 	     sci_subrate_factor);
 }
+
+#if defined(CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT)
+/* ZMK split-keyboard coexistence + the reduced-ce reservation gate: two links --
+ * one driven to 1.25 ms via SCI, the other left at 30 ms -- run concurrently. The
+ * SCI link must keep a fast cadence (not stalled by the slow link) AND the 30 ms
+ * link must NOT be starved by the SCI link's per-1.25 ms slot reservation. If the
+ * 30 ms link's event floor fails, the full-slot reservation starves coexisting
+ * links and the reduced-ce reservation work is required.
+ */
+static void test_central_main_sci_coex(void)
+{
+	struct bt_conn_le_conn_rate_param param = {
+		.interval_min_125us = 10U, .interval_max_125us = 10U,
+		.subrate_min = 1U, .subrate_max = 1U, .max_latency = 0U,
+		.continuation_number = 0U, .supervision_timeout_10ms = 200U,
+		.min_ce_len_125us = 1U, .max_ce_len_125us = 1U,
+	};
+	uint32_t before_sci, before_plain, sci_events, plain_events;
+	uint16_t h_sci, h_plain;
+	int err, i;
+
+	multi_mode = true;
+	if (central_init_multi()) {
+		return;
+	}
+	bt_conn_cb_register(&sci_extra_callbacks);
+
+	for (i = 0; i < 2; i++) {
+		err = bt_le_scan_start(BT_LE_SCAN_ACTIVE, device_found_multi);
+		if (err) {
+			FAIL("Coex: scan start for link %d failed (err %d)\n", i, err);
+			return;
+		}
+		SUBRATE_WAIT(m_nconns > i);
+	}
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	if (bt_hci_get_conn_handle(m_conn[0], &h_sci) ||
+	    bt_hci_get_conn_handle(m_conn[1], &h_plain)) {
+		FAIL("Coex: could not read conn handles\n");
+		return;
+	}
+
+	/* Drive link 0 to 1.25 ms via SCI; link 1 stays at 30 ms. */
+	efs_complete = false;
+	err = bt_conn_le_read_all_remote_features(m_conn[0], 1U);
+	if (err) {
+		FAIL("Coex: read-all-remote-features failed (err %d)\n", err);
+		return;
+	}
+	SUBRATE_WAIT(efs_complete);
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	sci_changed = false;
+	err = bt_conn_le_conn_rate_request(m_conn[0], &param);
+	if (err) {
+		FAIL("Coex: conn rate request failed (err %d)\n", err);
+		return;
+	}
+	SUBRATE_WAIT(sci_changed);
+	if (sci_status != BT_HCI_ERR_SUCCESS) {
+		FAIL("Coex: conn rate change failed (status 0x%02x)\n", sci_status);
+		return;
+	}
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	before_sci = ll_test_conn_event_count[h_sci];
+	before_plain = ll_test_conn_event_count[h_plain];
+	k_sleep(K_MSEC(LAT_COUNT_WINDOW_MS));
+	sci_events = ll_test_conn_event_count[h_sci] - before_sci;
+	plain_events = ll_test_conn_event_count[h_plain] - before_plain;
+
+	printk("Coex: SCI link (1.25 ms) %u events, plain link (30 ms) %u events in %u ms\n",
+	       sci_events, plain_events, LAT_COUNT_WINDOW_MS);
+
+	/* The 1.25 ms link runs fast (a >=7.5 ms link could not deliver this many):
+	 * ~window/1.25 ms ~= 2400; require well above a 7.5 ms link's ~400.
+	 */
+	if (sci_events < 800U) {
+		FAIL("Coex: SCI link stalled: %u events (expected >> 400 for 1.25 ms)\n",
+		     sci_events);
+		return;
+	}
+	/* The 30 ms link must not be starved by the SCI slot reservation:
+	 * ~window/30 ms ~= 100; require >= 40 (a dropped link gives ~0).
+	 */
+	if (plain_events < 40U) {
+		FAIL("Coex: 30 ms link starved by the 1.25 ms link: %u events "
+		     "(expected ~100) -- reduced-ce reservation needed\n", plain_events);
+		return;
+	}
+
+	for (i = 0; i < 2; i++) {
+		(void)bt_conn_disconnect(m_conn[i], BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	}
+	PASS("Coex: 1.25 ms SCI link (%u ev) coexisted with a 30 ms link (%u ev)\n",
+	     sci_events, plain_events);
+}
+#endif /* CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT */
 #endif /* CONFIG_BT_SHORTER_CONNECTION_INTERVALS */
 
 static void test_central_init(void)
@@ -1727,6 +1836,17 @@ static const struct bst_test_instance test_central[] = {
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_sci_subrate,
 	},
+#if defined(CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT)
+	{
+		.test_id = "central_sci_coex",
+		.test_descr = "Central: a 1.25 ms SCI link coexisting with a 30 ms link "
+			      "(ZMK split scenario / reduced-ce reservation gate) -- the SCI "
+			      "link runs fast and the 30 ms link is not starved.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_sci_coex,
+	},
+#endif
 #endif
 	BSTEST_END_MARKER,
 };
