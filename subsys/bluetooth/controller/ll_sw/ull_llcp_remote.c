@@ -105,6 +105,9 @@ static bool proc_with_instant(struct proc_ctx *ctx)
 	case PROC_CONN_UPDATE:
 	case PROC_CONN_PARAM_REQ:
 	case PROC_CHAN_MAP_UPDATE:
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	case PROC_CONN_RATE_UPDATE:
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 		return 1U;
 	default:
 		/* Unknown procedure */
@@ -331,6 +334,11 @@ void llcp_rr_rx(struct ll_conn *conn, struct proc_ctx *ctx, memq_link_t *link,
 		llcp_rp_subrate_rx(conn, ctx, rx);
 		break;
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	case PROC_CONN_RATE_UPDATE:
+		llcp_rp_conn_rate_rx(conn, ctx, rx);
+		break;
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 	default:
 		/* Unknown procedure */
 		LL_ASSERT(0);
@@ -373,6 +381,11 @@ void llcp_rr_tx_ack(struct ll_conn *conn, struct proc_ctx *ctx, struct node_tx *
 		llcp_rp_subrate_tx_ack(conn, ctx, tx);
 		break;
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	case PROC_CONN_RATE_UPDATE:
+		llcp_rp_conn_rate_tx_ack(conn, ctx, tx);
+		break;
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 	default:
 		/* Ignore tx_ack */
 		break;
@@ -486,6 +499,11 @@ static void rr_act_run(struct ll_conn *conn)
 		llcp_rp_subrate_run(conn, ctx, NULL);
 		break;
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	case PROC_CONN_RATE_UPDATE:
+		llcp_rp_conn_rate_run(conn, ctx, NULL);
+		break;
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 	default:
 		/* Unknown procedure */
 		LL_ASSERT(0);
@@ -709,7 +727,20 @@ static void rr_st_idle(struct ll_conn *conn, uint8_t evt, void *param)
 
 				if (ctx_local->proc == ctx->proc ||
 				    (ctx_local->proc == PROC_CONN_UPDATE &&
-				     ctx->proc == PROC_CONN_PARAM_REQ)) {
+				     ctx->proc == PROC_CONN_PARAM_REQ)
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+				    /* A Connection Rate Update changes the interval at an
+				     * instant, so it collides with CONN_UPDATE/CONN_PARAM_REQ
+				     * (either direction) just as those collide with each other.
+				     */
+				    || (ctx_local->proc == PROC_CONN_RATE_UPDATE &&
+					(ctx->proc == PROC_CONN_UPDATE ||
+					 ctx->proc == PROC_CONN_PARAM_REQ))
+				    || ((ctx_local->proc == PROC_CONN_UPDATE ||
+					 ctx_local->proc == PROC_CONN_PARAM_REQ) &&
+					ctx->proc == PROC_CONN_RATE_UPDATE)
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+				   ) {
 					conn->llcp_terminate.reason_final =
 						BT_HCI_ERR_LL_PROC_COLLISION;
 				} else {
@@ -949,6 +980,12 @@ static const struct proc_role new_proc_lut[] = {
 	/* Central updates subrating via LL_SUBRATE_IND; only a Peripheral accepts it (5.1.19) */
 	[PDU_DATA_LLCTRL_TYPE_SUBRATE_IND] = { PROC_SUBRATE_UPDATE, ACCEPT_ROLE_PERIPHERAL },
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	/* Peripheral requests via LL_CONNECTION_RATE_REQ; only a Central accepts it (5.1.33) */
+	[PDU_DATA_LLCTRL_TYPE_CONN_RATE_REQ] = { PROC_CONN_RATE_UPDATE, ACCEPT_ROLE_CENTRAL },
+	/* Central updates via LL_CONNECTION_RATE_IND; only a Peripheral accepts it (5.1.32) */
+	[PDU_DATA_LLCTRL_TYPE_CONN_RATE_IND] = { PROC_CONN_RATE_UPDATE, ACCEPT_ROLE_PERIPHERAL },
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 };
 
 void llcp_rr_new(struct ll_conn *conn, memq_link_t *link, struct node_rx_pdu *rx, bool valid_pdu)

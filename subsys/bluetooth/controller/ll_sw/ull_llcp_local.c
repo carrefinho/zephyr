@@ -334,6 +334,11 @@ void llcp_lr_rx(struct ll_conn *conn, struct proc_ctx *ctx, memq_link_t *link,
 		llcp_lp_subrate_rx(conn, ctx, rx);
 		break;
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	case PROC_CONN_RATE_UPDATE:
+		llcp_lp_conn_rate_rx(conn, ctx, rx);
+		break;
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 	default:
 		/* Unknown procedure */
 		LL_ASSERT(0);
@@ -384,6 +389,11 @@ void llcp_lr_tx_ack(struct ll_conn *conn, struct proc_ctx *ctx, struct node_tx *
 		llcp_lp_subrate_tx_ack(conn, ctx, tx);
 		break;
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	case PROC_CONN_RATE_UPDATE:
+		llcp_lp_conn_rate_tx_ack(conn, ctx, tx);
+		break;
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 	default:
 		break;
 		/* Ignore tx_ack */
@@ -498,6 +508,11 @@ static void lr_act_run(struct ll_conn *conn)
 		llcp_lp_subrate_run(conn, ctx, NULL);
 		break;
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	case PROC_CONN_RATE_UPDATE:
+		llcp_lp_conn_rate_run(conn, ctx, NULL);
+		break;
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 	default:
 		/* Unknown procedure */
 		LL_ASSERT(0);

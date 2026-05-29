@@ -1133,6 +1133,53 @@ uint8_t ull_cp_subrate_req(struct ll_conn *conn, uint16_t subrate_min, uint16_t 
 }
 #endif /* CONFIG_BT_CTLR_SUBRATING */
 
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+uint8_t ull_cp_conn_rate_req(struct ll_conn *conn, uint16_t interval_min, uint16_t interval_max,
+			     uint16_t subrate_min, uint16_t subrate_max, uint16_t max_latency,
+			     uint16_t continuation_number, uint16_t timeout)
+{
+	struct proc_ctx *ctx;
+
+	if (conn->lll.role == BT_HCI_ROLE_CENTRAL) {
+		/* Core 6.2, 5.1.32: the peer (Peripheral) must support SCI. This
+		 * reads feature page 1, so the Extended Feature Set page exchange
+		 * must have completed (ext_valid); otherwise treat as unsupported.
+		 */
+		if (!feature_peer_sci(conn)) {
+			return BT_HCI_ERR_UNSUPP_REMOTE_FEATURE;
+		}
+	} else {
+		/* Core 6.2, 5.1.33: a Peripheral must not initiate unless its own
+		 * Host has set the SCI Host Support bit.
+		 */
+		if (!ll_feat_sci_host_supported()) {
+			return BT_HCI_ERR_CMD_DISALLOWED;
+		}
+	}
+
+	ctx = llcp_create_local_procedure(PROC_CONN_RATE_UPDATE);
+	if (!ctx) {
+		return BT_HCI_ERR_CMD_DISALLOWED;
+	}
+
+	/* interval_min/max are in internal 1.25 ms units (the HCI layer applied
+	 * the RCV /10 conversion and grid check before calling).
+	 */
+	ctx->data.conn_rate.interval_min = interval_min;
+	ctx->data.conn_rate.interval_max = interval_max;
+	ctx->data.conn_rate.subrate_factor_min = subrate_min;
+	ctx->data.conn_rate.subrate_factor_max = subrate_max;
+	ctx->data.conn_rate.max_latency = max_latency;
+	ctx->data.conn_rate.continuation_number = continuation_number;
+	ctx->data.conn_rate.timeout = timeout;
+	ctx->data.conn_rate.error = BT_HCI_ERR_SUCCESS;
+
+	llcp_lr_enqueue(conn, ctx);
+
+	return BT_HCI_ERR_SUCCESS;
+}
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
 #if defined(CONFIG_BT_CTLR_SYNC_TRANSFER_SENDER)
 uint8_t ull_cp_periodic_sync(struct ll_conn *conn, struct ll_sync_set *sync,
 			     struct ll_adv_sync_set *adv_sync, uint16_t service_data)
@@ -1885,6 +1932,18 @@ static bool pdu_validate_subrate_ind(struct pdu_data *pdu)
 }
 #endif /* CONFIG_BT_CTLR_SUBRATING */
 
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+static bool pdu_validate_conn_rate_req(struct pdu_data *pdu)
+{
+	return VALIDATE_PDU_LEN(pdu, conn_rate_req);
+}
+
+static bool pdu_validate_conn_rate_ind(struct pdu_data *pdu)
+{
+	return VALIDATE_PDU_LEN(pdu, conn_rate_ind);
+}
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
 typedef bool (*pdu_param_validate_t)(struct pdu_data *pdu);
 
 struct pdu_validate {
@@ -1964,6 +2023,10 @@ static const struct pdu_validate pdu_validate[] = {
 	[PDU_DATA_LLCTRL_TYPE_SUBRATE_REQ] = { pdu_validate_subrate_req },
 	[PDU_DATA_LLCTRL_TYPE_SUBRATE_IND] = { pdu_validate_subrate_ind },
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	[PDU_DATA_LLCTRL_TYPE_CONN_RATE_REQ] = { pdu_validate_conn_rate_req },
+	[PDU_DATA_LLCTRL_TYPE_CONN_RATE_IND] = { pdu_validate_conn_rate_ind },
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 #if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
 	[PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_REQ] = { pdu_validate_feature_ext_req },
 	[PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_RSP] = { pdu_validate_feature_ext_rsp },

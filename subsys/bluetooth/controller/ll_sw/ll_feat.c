@@ -176,3 +176,11 @@ uint8_t ll_feat_local_max_page(void)
 	return 0U;
 }
 #endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
+
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+bool ll_feat_sci_host_supported(void)
+{
+	return (host_features_page1 &
+		BIT64(BT_LE_FEAT_BIT_SHORTER_CONN_INTERVALS_HOST_SUPP - 64U)) != 0U;
+}
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
