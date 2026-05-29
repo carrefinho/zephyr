@@ -47,9 +47,12 @@ static struct bt_conn *default_conn;
 
 #if defined(CONFIG_SCI_LATENCY_CENTRAL)
 
-static const uint16_t sweep_factors[] = { 1U, 2U, 4U, 8U, 16U };
+static const uint16_t sweep_factors[] = { 1U, 2U, 4U, 8U };
 #define READS_PER_FACTOR   10
-#define READ_GAP_MS        200   /* > 16 x 1.25 ms so the peer re-sleeps between reads */
+/* "idle" gap: > factor x 1.25 ms so the peer re-sleeps between isolated reads. */
+#define IDLE_GAP_MS        200
+/* "burst" gap: small, so reads land inside the continuation (awake) window. */
+#define BURST_GAP_MS       2
 
 static K_SEM_DEFINE(sem_connected, 0, 1);
 static K_SEM_DEFINE(sem_feat, 0, 1);
@@ -202,7 +205,7 @@ static int32_t probe_once(void)
 	return (int32_t)k_cyc_to_us_floor32(dt);
 }
 
-static int measure_factor(uint16_t factor, int32_t *out_min, int32_t *out_avg, int32_t *out_max)
+static int measure(int gap_ms, int32_t *out_min, int32_t *out_avg, int32_t *out_max)
 {
 	int32_t mn = INT32_MAX, mx = 0;
 	int64_t sum = 0;
@@ -222,12 +225,42 @@ static int measure_factor(uint16_t factor, int32_t *out_min, int32_t *out_avg, i
 		}
 		sum += us;
 		n++;
-		k_sleep(K_MSEC(READ_GAP_MS));
+		k_sleep(K_MSEC(gap_ms));
 	}
 
 	*out_min = mn;
 	*out_avg = (int32_t)(sum / n);
 	*out_max = mx;
+	return 0;
+}
+
+/* Apply a subrate factor with the given continuation number, wait for it to take
+ * effect. Returns 0 on success.
+ */
+static int apply_subrate(uint16_t factor, uint16_t continuation)
+{
+	struct bt_conn_le_subrate_param sub = {
+		.subrate_min = factor,
+		.subrate_max = factor,
+		.max_latency = 0U,
+		.continuation_number = continuation,
+		.supervision_timeout = SUBRATE_TIMEOUT_10MS,
+	};
+	int err;
+
+	subrate_status = 0xFFU;
+	negotiated_factor = 0U;
+	err = bt_conn_le_subrate_request(default_conn, &sub);
+	if (err) {
+		LOG_ERR("subrate request (factor %u) failed (err %d)", factor, err);
+		return -1;
+	}
+	if (k_sem_take(&sem_subrate, K_SECONDS(5)) != 0 ||
+	    subrate_status != BT_HCI_ERR_SUCCESS) {
+		LOG_ERR("subrate factor %u not applied (status 0x%02x)", factor, subrate_status);
+		return -1;
+	}
+	k_sleep(K_MSEC(300)); /* let the new subrate cadence settle */
 	return 0;
 }
 
@@ -279,42 +312,30 @@ int main(void)
 		LOG_ERR("conn rate update failed (status 0x%02x)", conn_rate_status);
 		return 0;
 	}
-	LOG_INF("Link now at 1.25 ms. Sweeping subrate factor...");
-	LOG_INF("  (round-trip GATT read latency; isolated reads, peer re-sleeps between)");
-	LOG_INF("factor | effective | min us | avg us | max us");
+	LOG_INF("Link now at 1.25 ms. Sweeping subrate factor (round-trip GATT read).");
+	LOG_INF("  idle  = isolated reads (peer sleeps between) -- continuation 0");
+	LOG_INF("  burst = back-to-back reads (peer stays awake) -- continuation factor-1");
+	LOG_INF("factor | effective | idle min/avg/max us | burst min/avg/max us");
 
 	for (int i = 0; i < (int)ARRAY_SIZE(sweep_factors); i++) {
 		uint16_t f = sweep_factors[i];
-		struct bt_conn_le_subrate_param sub = {
-			.subrate_min = f,
-			.subrate_max = f,
-			.max_latency = 0U,
-			.continuation_number = 0U,
-			.supervision_timeout = SUBRATE_TIMEOUT_10MS,
-		};
-		int32_t mn, avg, mx;
+		int32_t imn, iavg, imx, bmn, bavg, bmx;
 
-		subrate_status = 0xFFU;
-		negotiated_factor = 0U;
-		err = bt_conn_le_subrate_request(default_conn, &sub);
-		if (err) {
-			LOG_ERR("subrate request (factor %u) failed (err %d)", f, err);
+		/* Idle: continuation 0, large gap -> the peer re-sleeps between reads. */
+		if (apply_subrate(f, 0U) || measure(IDLE_GAP_MS, &imn, &iavg, &imx)) {
 			break;
 		}
-		if (k_sem_take(&sem_subrate, K_SECONDS(5)) != 0 ||
-		    subrate_status != BT_HCI_ERR_SUCCESS) {
-			LOG_ERR("subrate factor %u not applied (status 0x%02x)", f, subrate_status);
+		/* Burst: continuation factor-1, tiny gap -> reads stay in the awake
+		 * window, so latency should fall back to ~one interval if the high idle
+		 * number is just the peer sleeping between subrated events.
+		 */
+		if (apply_subrate(f, (f > 1U) ? (uint16_t)(f - 1U) : 0U) ||
+		    measure(BURST_GAP_MS, &bmn, &bavg, &bmx)) {
 			break;
 		}
-		/* Settle so the new subrate cadence is in effect before probing. */
-		k_sleep(K_MSEC(300));
 
-		if (measure_factor(negotiated_factor, &mn, &avg, &mx)) {
-			LOG_ERR("measurement failed at factor %u", negotiated_factor);
-			break;
-		}
-		LOG_INF("%6u | %6u ms | %6d | %6d | %6d",
-			negotiated_factor, (negotiated_factor * 5U) / 4U, mn, avg, mx);
+		LOG_INF("%6u | %6u ms | %6d/%6d/%6d | %6d/%6d/%6d",
+			f, (f * 5U) / 4U, imn, iavg, imx, bmn, bavg, bmx);
 
 		if (!default_conn) {
 			LOG_ERR("link dropped during sweep");
@@ -333,10 +354,22 @@ static const struct bt_data ad[] = {
 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
 };
 
+static void start_adv(void)
+{
+	int err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad), NULL, 0);
+
+	if (err) {
+		LOG_ERR("advertising start failed (err %d)", err);
+	} else {
+		LOG_INF("Advertising as \"%s\"", DEVICE_NAME);
+	}
+}
+
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	if (err) {
 		LOG_ERR("connect failed (0x%02x)", err);
+		start_adv();
 		return;
 	}
 	LOG_INF("Connected -- central will drive SCI + subrating");
@@ -345,6 +378,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	LOG_WRN("Disconnected (reason 0x%02x); re-advertising", reason);
+	start_adv();
 }
 
 static void conn_rate_changed(struct bt_conn *conn, uint8_t status,
@@ -383,12 +417,8 @@ int main(void)
 	}
 	bt_conn_cb_register(&conn_callbacks);
 
-	err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad), NULL, 0);
-	if (err) {
-		LOG_ERR("advertising start failed (err %d)", err);
-		return 0;
-	}
-	LOG_INF("SCI latency tester: PERIPHERAL \"%s\". Advertising.", DEVICE_NAME);
+	LOG_INF("SCI latency tester: PERIPHERAL \"%s\"", DEVICE_NAME);
+	start_adv();
 	return 0;
 }
 
