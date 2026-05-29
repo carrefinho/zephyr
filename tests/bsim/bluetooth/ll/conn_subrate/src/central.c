@@ -1300,6 +1300,126 @@ static void test_central_main_efs(void)
 }
 #endif /* CONFIG_BT_LE_EXTENDED_FEAT_SET */
 
+#if defined(CONFIG_BT_SHORTER_CONNECTION_INTERVALS)
+static volatile bool sci_changed;
+static volatile uint8_t sci_status = 0xFFU;
+
+static void sci_conn_rate_changed(struct bt_conn *conn, uint8_t status,
+				  const struct bt_conn_le_conn_rate_changed *params)
+{
+	ARG_UNUSED(conn);
+	ARG_UNUSED(params);
+
+	sci_status = status;
+	sci_changed = true;
+	printk("Central connection rate changed: status 0x%02x\n", status);
+}
+
+static struct bt_conn_cb sci_conn_callbacks = {
+	.connected = connected,
+	.disconnected = disconnected,
+	/* Reuse the EFS page-exchange completion callback (SCI depends on EFS) so
+	 * we know the peer's page-1 features (incl. the SCI Host Support bit) are
+	 * available before initiating.
+	 */
+	.read_all_remote_feat_complete = efs_read_all_remote_feat_complete,
+	.conn_rate_changed = sci_conn_rate_changed,
+};
+
+/* RCV-tier Shorter Connection Intervals end-to-end: a Central drives the link to
+ * a 1.25 ms connection interval via the Connection Rate Update procedure and
+ * verifies the host sees the change (0x37 event) with interval_us == 1250 and the
+ * link survives. Requires the page-1 feature exchange first (the Central gates on
+ * the peer's SCI Host Support bit 73).
+ */
+static void test_central_main_sci(void)
+{
+	struct bt_conn_le_conn_rate_param param = {
+		.interval_min_125us = 10U,   /* 1250 us */
+		.interval_max_125us = 10U,   /* 1250 us */
+		.subrate_min = 1U,
+		.subrate_max = 1U,
+		.max_latency = 0U,
+		.continuation_number = 0U,
+		.supervision_timeout_10ms = 200U, /* 2 s */
+		.min_ce_len_125us = 1U,
+		.max_ce_len_125us = 1U,
+	};
+	struct bt_conn_info info;
+	int err;
+
+	bt_conn_cb_register(&sci_conn_callbacks);
+
+	err = bt_enable(NULL);
+	if (err) {
+		FAIL("Bluetooth init failed (err %d)\n", err);
+		return;
+	}
+	printk("Central Bluetooth initialized (SCI)\n");
+
+	err = bt_le_scan_start(BT_LE_SCAN_ACTIVE, device_found);
+	if (err) {
+		FAIL("Scanning failed to start (err %d)\n", err);
+		return;
+	}
+
+	SUBRATE_WAIT(central_connected && default_conn);
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	/* Exchange feature page 1 so the Central knows the peer's SCI Host Support
+	 * bit before it may initiate (Core 6.2 5.1.32).
+	 */
+	efs_complete = false;
+	err = bt_conn_le_read_all_remote_features(default_conn, 1U);
+	if (err) {
+		FAIL("Central read-all-remote-features request failed (err %d)\n", err);
+		return;
+	}
+	SUBRATE_WAIT(efs_complete);
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	err = bt_conn_le_conn_rate_request(default_conn, &param);
+	if (err) {
+		FAIL("Central connection rate request failed (err %d)\n", err);
+		return;
+	}
+	printk("Central requested a 1.25 ms connection rate\n");
+
+	SUBRATE_WAIT(sci_changed);
+
+	if (sci_status != BT_HCI_ERR_SUCCESS) {
+		FAIL("Connection rate change failed (status 0x%02x)\n", sci_status);
+		return;
+	}
+	if (!central_connected || !default_conn) {
+		FAIL("Link dropped during the connection rate update\n");
+		return;
+	}
+
+	err = bt_conn_get_info(default_conn, &info);
+	if (err) {
+		FAIL("bt_conn_get_info failed (err %d)\n", err);
+		return;
+	}
+	printk("Central connection interval after SCI: %u us\n", info.le.interval_us);
+	if (info.le.interval_us != 1250U) {
+		FAIL("Expected a 1250 us interval, got %u us\n", info.le.interval_us);
+		return;
+	}
+
+	/* Hold the 1.25 ms link to confirm both ends stay anchored (no supervision
+	 * timeout / desync after the instant).
+	 */
+	k_sleep(K_MSEC(2000));
+	if (!central_connected || !default_conn) {
+		FAIL("1.25 ms link dropped after the connection rate update\n");
+		return;
+	}
+
+	PASS("Central SCI test passed: 1.25 ms link established and held\n");
+}
+#endif /* CONFIG_BT_SHORTER_CONNECTION_INTERVALS */
+
 static void test_central_init(void)
 {
 	bst_ticker_set_next_tick_absolute(WAIT_TIME * 1e6);
@@ -1429,6 +1549,17 @@ static const struct bst_test_instance test_central[] = {
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_efs,
+	},
+#endif
+#if defined(CONFIG_BT_SHORTER_CONNECTION_INTERVALS)
+	{
+		.test_id = "central_sci",
+		.test_descr = "Central: RCV Shorter Connection Intervals - drive the link "
+			      "to a 1.25 ms interval via Connection Rate Update; the 0x37 "
+			      "event reports interval_us 1250 and the link holds.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_sci,
 	},
 #endif
 	BSTEST_END_MARKER,
