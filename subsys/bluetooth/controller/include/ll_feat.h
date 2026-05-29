@@ -259,14 +259,27 @@
 #define LL_FEAT_BIT_CONN_SUBRATING 0
 #endif /* !CONFIG_BT_CTLR_SUBRATING */
 
-/* All defined feature bits */
-#define LL_FEAT_BIT_MASK         0xFFFFFFFFFFULL
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+/* Bit 63: LL Extended Feature Set. This is the page-0 "announce" bit that tells
+ * the peer (and the local host, via LE Read Local Features) that pages >= 1 can
+ * be exchanged. It is 0 when EFS is disabled, so the masks below stay
+ * byte-identical for non-EFS builds.
+ */
+#define LL_FEAT_BIT_EXTENDED_FEAT_SET BIT64(BT_LE_FEAT_BIT_EXTENDED_FEAT_SET)
+#else /* !CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
+#define LL_FEAT_BIT_EXTENDED_FEAT_SET 0
+#endif /* !CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
+
+/* All defined feature bits (bit 63 must be in the mask so the page-0 feature
+ * exchange carries the Extended Feature Set announce bit, not just bits 0-39)
+ */
+#define LL_FEAT_BIT_MASK         (0xFFFFFFFFFFULL | LL_FEAT_BIT_EXTENDED_FEAT_SET)
 
 /*
  * LL_FEAT_BIT_MASK_VALID is defined as per
  * Core Spec V5.3 Volume 6, Part B, chapter 4.6
  */
-#define LL_FEAT_BIT_MASK_VALID   0xEFF787CF2FULL
+#define LL_FEAT_BIT_MASK_VALID   (0xEFF787CF2FULL | LL_FEAT_BIT_EXTENDED_FEAT_SET)
 
 /* Mask to filter away octet 0 for feature exchange */
 #define LL_FEAT_FILTER_OCTET0    (LL_FEAT_BIT_MASK & ~0xFFULL)
@@ -303,7 +316,8 @@
 				  LL_FEAT_BIT_PERIODIC_ADI_SUPPORT | \
 				  LL_FEAT_BIT_SYNC_TRANSFER_RECEIVER | \
 				  LL_FEAT_BIT_SYNC_TRANSFER_SENDER | \
-				  LL_FEAT_BIT_CONN_SUBRATING)
+				  LL_FEAT_BIT_CONN_SUBRATING | \
+				  LL_FEAT_BIT_EXTENDED_FEAT_SET)
 
 /* Connected Isochronous Stream (Host Support) bit is controlled by host */
 #if defined(CONFIG_BT_CTLR_CONN_ISO)
