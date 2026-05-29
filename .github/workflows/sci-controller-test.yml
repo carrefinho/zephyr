@@ -34,8 +34,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           persist-credentials: false
+
+      - name: Resolve west topdir
+        run: echo "WEST_TOPDIR=$(realpath "$GITHUB_WORKSPACE/..")" >> "$GITHUB_ENV"
+
+      - name: Cache west modules
+        uses: actions/cache@v5
+        env:
+          cache-name: cache-zephyr-modules
+        with:
+          path: |
+            ${{ env.WEST_TOPDIR }}/modules
+            ${{ env.WEST_TOPDIR }}/tools
+            ${{ env.WEST_TOPDIR }}/bootloader
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('west.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+        timeout-minutes: 5
+        continue-on-error: true
 
       - name: West init + update
         run: |
