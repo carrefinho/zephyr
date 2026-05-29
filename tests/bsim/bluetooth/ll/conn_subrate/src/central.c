@@ -1303,16 +1303,20 @@ static void test_central_main_efs(void)
 #if defined(CONFIG_BT_SHORTER_CONNECTION_INTERVALS)
 static volatile bool sci_changed;
 static volatile uint8_t sci_status = 0xFFU;
+static volatile uint16_t sci_subrate_factor;
 
 static void sci_conn_rate_changed(struct bt_conn *conn, uint8_t status,
 				  const struct bt_conn_le_conn_rate_changed *params)
 {
 	ARG_UNUSED(conn);
-	ARG_UNUSED(params);
 
 	sci_status = status;
+	if (params != NULL) {
+		sci_subrate_factor = params->subrate_factor;
+	}
 	sci_changed = true;
-	printk("Central connection rate changed: status 0x%02x\n", status);
+	printk("Central connection rate changed: status 0x%02x factor %u\n", status,
+	       params != NULL ? params->subrate_factor : 0U);
 }
 
 static struct bt_conn_cb sci_conn_callbacks = {
@@ -1347,6 +1351,7 @@ static void test_central_main_sci(void)
 	};
 	struct bt_conn_info info;
 	int err;
+	int i;
 
 	bt_conn_cb_register(&sci_conn_callbacks);
 
@@ -1407,6 +1412,56 @@ static void test_central_main_sci(void)
 		return;
 	}
 
+	/* ZMK relevance: the whole point of RCV is low-latency HID over the split
+	 * link. On a 1.25 ms link a GATT round-trip should complete in a few ms --
+	 * far below what a >=7.5 ms-interval link could deliver. Measure it.
+	 */
+	{
+		int64_t mn, mx;
+
+		if (probe_minmax(4, 100, &mn, &mx)) {
+			return;
+		}
+		printk("Central SCI 1.25 ms link GATT read latency: min %lld ms max %lld ms\n",
+		       mn, mx);
+		/* A 1.25 ms link delivers a GATT round-trip in a few ms; a >=7.5 ms-min
+		 * link (e.g. the default 30 ms) could not. 15 ms tolerates bsim jitter /
+		 * first-read ATT setup while still proving the sub-7.5 ms benefit.
+		 */
+		if (mx > 15) {
+			FAIL("1.25 ms link read latency too high (max %lld ms > 15 ms): "
+			     "interval/anchor likely wrong\n", mx);
+			return;
+		}
+	}
+
+	/* RCV grid enforcement: off-grid intervals (ECV / sub-floor / straddle) the
+	 * host range check (floor 375 us) lets through must be rejected by the
+	 * controller, so the request returns an error and the link is untouched.
+	 */
+	{
+		static const uint16_t bad_125us[][2] = {
+			{9U, 9U},    /* 1125 us, sub-floor ECV */
+			{11U, 11U},  /* 1375 us, ECV */
+			{8U, 10U},   /* straddle: min off-grid */
+		};
+
+		for (i = 0; i < (int)ARRAY_SIZE(bad_125us); i++) {
+			struct bt_conn_le_conn_rate_param bad = param;
+
+			bad.interval_min_125us = bad_125us[i][0];
+			bad.interval_max_125us = bad_125us[i][1];
+			err = bt_conn_le_conn_rate_request(default_conn, &bad);
+			if (err == 0) {
+				FAIL("Off-grid interval {%u,%u} (125us) was accepted, "
+				     "expected reject\n", bad_125us[i][0], bad_125us[i][1]);
+				return;
+			}
+			printk("Off-grid interval {%u,%u} correctly rejected (err %d)\n",
+			       bad_125us[i][0], bad_125us[i][1], err);
+		}
+	}
+
 	/* Hold the 1.25 ms link to confirm both ends stay anchored (no supervision
 	 * timeout / desync after the instant).
 	 */
@@ -1416,7 +1471,109 @@ static void test_central_main_sci(void)
 		return;
 	}
 
-	PASS("Central SCI test passed: 1.25 ms link established and held\n");
+	PASS("Central SCI test passed: 1.25 ms link, low-latency reads, off-grid rejected\n");
+}
+
+/* RCV Shorter Connection Intervals fused with subrating (factor > 1). Exercises
+ * the connSubrateBaseEvent fix: with a subrate factor the live subrate skipper
+ * (ull_conn.c) makes both ends skip to the SAME subrated events only if they
+ * agree on connSubrateBaseEvent (= the wire Instant); a disagreement desyncs the
+ * anchor and drops the link on supervision timeout. So a held factor>1 1.25 ms
+ * link validates the fix. Mirrors the ZMK idle scenario: a low-latency link that
+ * subrates for power when idle.
+ */
+static void test_central_main_sci_subrate(void)
+{
+	struct bt_conn_le_conn_rate_param param = {
+		.interval_min_125us = 10U,   /* 1250 us */
+		.interval_max_125us = 10U,
+		.subrate_min = 1U,
+		.subrate_max = 4U,           /* effective 4 x 1.25 ms = 5 ms when idle */
+		.max_latency = 0U,
+		.continuation_number = 0U,
+		.supervision_timeout_10ms = 200U, /* 2 s */
+		.min_ce_len_125us = 1U,
+		.max_ce_len_125us = 1U,
+	};
+	struct bt_conn_info info;
+	int64_t mn, mx;
+	int err;
+
+	bt_conn_cb_register(&sci_conn_callbacks);
+
+	err = bt_enable(NULL);
+	if (err) {
+		FAIL("Bluetooth init failed (err %d)\n", err);
+		return;
+	}
+	printk("Central Bluetooth initialized (SCI subrate)\n");
+
+	err = bt_le_scan_start(BT_LE_SCAN_ACTIVE, device_found);
+	if (err) {
+		FAIL("Scanning failed to start (err %d)\n", err);
+		return;
+	}
+
+	SUBRATE_WAIT(central_connected && default_conn);
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	efs_complete = false;
+	err = bt_conn_le_read_all_remote_features(default_conn, 1U);
+	if (err) {
+		FAIL("Central read-all-remote-features request failed (err %d)\n", err);
+		return;
+	}
+	SUBRATE_WAIT(efs_complete);
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	err = bt_conn_le_conn_rate_request(default_conn, &param);
+	if (err) {
+		FAIL("Central connection rate (subrate) request failed (err %d)\n", err);
+		return;
+	}
+	printk("Central requested 1.25 ms + subrate factor up to %u\n", param.subrate_max);
+
+	SUBRATE_WAIT(sci_changed);
+	if (sci_status != BT_HCI_ERR_SUCCESS) {
+		FAIL("Connection rate (subrate) change failed (status 0x%02x)\n", sci_status);
+		return;
+	}
+	if (sci_subrate_factor < 2U) {
+		FAIL("Expected a subrate factor >= 2, got %u\n", sci_subrate_factor);
+		return;
+	}
+	err = bt_conn_get_info(default_conn, &info);
+	if (err) {
+		FAIL("bt_conn_get_info failed (err %d)\n", err);
+		return;
+	}
+	if (info.le.interval_us != 1250U) {
+		FAIL("Expected a 1250 us interval, got %u us\n", info.le.interval_us);
+		return;
+	}
+	printk("Central SCI subrate: interval 1250 us, factor %u\n", sci_subrate_factor);
+
+	/* With the skipper live, reads complete only if both ends agree on the
+	 * subrated-event phase (the base_event fix). A desync would time out the
+	 * read or drop the link. Max latency should sit around factor*interval.
+	 */
+	if (probe_minmax(NUM_READS, READ_GAP_MS, &mn, &mx)) {
+		return;
+	}
+	printk("Central SCI subrate read latency: min %lld ms max %lld ms (factor %u)\n",
+	       mn, mx, sci_subrate_factor);
+	if (!central_connected || !default_conn) {
+		FAIL("Subrated 1.25 ms link dropped (base_event desync?)\n");
+		return;
+	}
+	if (mx > 4 * sci_subrate_factor * 2) { /* generous: 2x factor*interval(ms-ish) */
+		FAIL("Subrate skip latency %lld ms exceeds factor %u cadence "
+		     "(phase/base_event wrong)\n", mx, sci_subrate_factor);
+		return;
+	}
+
+	PASS("Central SCI subrate test passed: factor %u on a 1.25 ms link, link held\n",
+	     sci_subrate_factor);
 }
 #endif /* CONFIG_BT_SHORTER_CONNECTION_INTERVALS */
 
@@ -1560,6 +1717,15 @@ static const struct bst_test_instance test_central[] = {
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_sci,
+	},
+	{
+		.test_id = "central_sci_subrate",
+		.test_descr = "Central: RCV SCI fused with subrating (factor>1) on a 1.25 ms "
+			      "link; validates connSubrateBaseEvent agreement (link holds, "
+			      "skip cadence sane) -- the ZMK idle power-saving scenario.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_sci_subrate,
 	},
 #endif
 	BSTEST_END_MARKER,
