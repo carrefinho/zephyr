@@ -65,7 +65,7 @@ jobs:
           west forall -c 'git reset --hard HEAD'
           echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
 
-      - name: Compile controller with Shorter Connection Intervals ON (nRF52, build-only)
+      - name: Compile controller with Shorter Connection Intervals ON (nRF52)
         shell: bash
         run: |
           export ZEPHYR_BASE="${PWD}"
@@ -73,3 +73,10 @@ jobs:
           conf_overlay="${ZEPHYR_BASE}/tests/bsim/bluetooth/ll/conn_subrate/overlay-sci.conf" \
             app=tests/bsim/bluetooth/ll/conn_subrate compile
           wait_for_background_jobs
+
+      - name: Run the Connection Rate Update scenario (nRF52 bsim)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=120
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci.sh
