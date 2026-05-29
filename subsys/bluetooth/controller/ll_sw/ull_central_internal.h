@@ -4,6 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/* Forward declarations for the aggregate types used only by pointer in the
+ * prototypes below. This header is included by translation units (e.g.
+ * ull_chan.c) that do not pull in ull_conn_types.h, so without these the
+ * struct would be declared inside a parameter list (-Werror under some configs,
+ * e.g. when BT_CTLR_ADVANCED_FEATURES changes the adv include path).
+ */
+struct ll_conn;
+
 int ull_central_reset(void);
 void ull_central_cleanup(struct node_rx_pdu *rx_free);
 void ull_central_setup(struct node_rx_pdu *rx, struct node_rx_ftr *ftr,
