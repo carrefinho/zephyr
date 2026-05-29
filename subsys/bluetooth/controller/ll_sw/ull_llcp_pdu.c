@@ -1191,3 +1191,125 @@ void llcp_pdu_decode_subrate_ind(struct proc_ctx *ctx, struct pdu_data *pdu)
 	ctx->data.subrate.timeout = sys_le16_to_cpu(p->timeout);
 }
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+/* RCV tier keeps the controller's internal 1.25 ms connection-interval grid:
+ * intervals travel on air in 125 us units, so accept only multiples of 10
+ * (1250 us) and convert by dividing by 10. The 1250 us floor (0x000A)
+ * deliberately rejects the 375..1125 us ECV band that the host range check
+ * (floor 375 us) lets through, so the controller is the sole RCV gate.
+ */
+#define LLCP_CONN_RATE_INTERVAL_MIN_125US 10U     /* 1250 us  -> internal 1 */
+#define LLCP_CONN_RATE_INTERVAL_MAX_125US 32000U  /* 4 s (0x7D00) -> internal 3200 */
+
+/* Convert a 125 us-unit connection interval to internal 1.25 ms units on the
+ * RCV grid. Returns true and writes *out_units on success; false for ECV
+ * (non-multiple-of-10), sub-floor, or out-of-range values.
+ */
+static bool conn_rate_interval_from_125us(uint16_t interval_125us, uint16_t *out_units)
+{
+	if ((interval_125us % 10U) != 0U ||
+	    interval_125us < LLCP_CONN_RATE_INTERVAL_MIN_125US ||
+	    interval_125us > LLCP_CONN_RATE_INTERVAL_MAX_125US) {
+		return false;
+	}
+
+	*out_units = (uint16_t)(interval_125us / 10U);
+
+	return true;
+}
+
+void llcp_pdu_encode_conn_rate_req(struct proc_ctx *ctx, struct pdu_data *pdu)
+{
+	struct pdu_data_llctrl_conn_rate_req *p = &pdu->llctrl.conn_rate_req;
+
+	pdu->ll_id = PDU_DATA_LLID_CTRL;
+	pdu->len = PDU_DATA_LLCTRL_LEN(conn_rate_req);
+	pdu->llctrl.opcode = PDU_DATA_LLCTRL_TYPE_CONN_RATE_REQ;
+
+	/* Internal 1.25 ms units -> 125 us units on air (RCV: always x10) */
+	p->interval_min = sys_cpu_to_le16(ctx->data.conn_rate.interval_min * 10U);
+	p->interval_max = sys_cpu_to_le16(ctx->data.conn_rate.interval_max * 10U);
+	p->subrate_factor_min = sys_cpu_to_le16(ctx->data.conn_rate.subrate_factor_min);
+	p->subrate_factor_max = sys_cpu_to_le16(ctx->data.conn_rate.subrate_factor_max);
+	p->max_latency = sys_cpu_to_le16(ctx->data.conn_rate.max_latency);
+	p->continuation_number = sys_cpu_to_le16(ctx->data.conn_rate.continuation_number);
+	p->timeout = sys_cpu_to_le16(ctx->data.conn_rate.timeout);
+	/* RCV: no anchor-point preference (0xFFFF offsets = not valid) */
+	p->preferred_periodicity = sys_cpu_to_le16(0U);
+	p->reference_conn_event_count = sys_cpu_to_le16(0U);
+	p->offset0 = sys_cpu_to_le16(0xFFFFU);
+	p->offset1 = sys_cpu_to_le16(0xFFFFU);
+	p->offset2 = sys_cpu_to_le16(0xFFFFU);
+	p->offset3 = sys_cpu_to_le16(0xFFFFU);
+}
+
+void llcp_pdu_decode_conn_rate_req(struct proc_ctx *ctx, struct pdu_data *pdu)
+{
+	struct pdu_data_llctrl_conn_rate_req *p = &pdu->llctrl.conn_rate_req;
+	uint16_t interval_min;
+	uint16_t interval_max;
+
+	ctx->data.conn_rate.error = BT_HCI_ERR_SUCCESS;
+
+	/* Each of Interval_Min and Interval_Max must be on the RCV grid; a
+	 * straddle such as {min=8, max=10} is rejected because min is not a
+	 * multiple of 10.
+	 */
+	if (!conn_rate_interval_from_125us(sys_le16_to_cpu(p->interval_min), &interval_min) ||
+	    !conn_rate_interval_from_125us(sys_le16_to_cpu(p->interval_max), &interval_max)) {
+		ctx->data.conn_rate.error = BT_HCI_ERR_UNSUPP_LL_PARAM_VAL;
+		return;
+	}
+
+	ctx->data.conn_rate.interval_min = interval_min;
+	ctx->data.conn_rate.interval_max = interval_max;
+	ctx->data.conn_rate.subrate_factor_min = sys_le16_to_cpu(p->subrate_factor_min);
+	ctx->data.conn_rate.subrate_factor_max = sys_le16_to_cpu(p->subrate_factor_max);
+	ctx->data.conn_rate.max_latency = sys_le16_to_cpu(p->max_latency);
+	ctx->data.conn_rate.continuation_number = sys_le16_to_cpu(p->continuation_number);
+	ctx->data.conn_rate.timeout = sys_le16_to_cpu(p->timeout);
+	/* PreferredPeriodicity / ReferenceConnEventCount / Offset0-3 are anchor
+	 * negotiation hints; RCV ignores them (no anchor-point move).
+	 */
+}
+
+void llcp_pdu_encode_conn_rate_ind(struct proc_ctx *ctx, struct pdu_data *pdu)
+{
+	struct pdu_data_llctrl_conn_rate_ind *p = &pdu->llctrl.conn_rate_ind;
+
+	pdu->ll_id = PDU_DATA_LLID_CTRL;
+	pdu->len = PDU_DATA_LLCTRL_LEN(conn_rate_ind);
+	pdu->llctrl.opcode = PDU_DATA_LLCTRL_TYPE_CONN_RATE_IND;
+
+	/* transmitWindowOffset = WinOffset x 125 us (RCV: 0, no anchor move) */
+	p->win_offset = sys_cpu_to_le16((uint16_t)(ctx->data.conn_rate.win_offset_us / 125U));
+	p->interval = sys_cpu_to_le16(ctx->data.conn_rate.interval * 10U);
+	p->instant = sys_cpu_to_le16(ctx->data.conn_rate.instant);
+	p->subrate_factor = sys_cpu_to_le16(ctx->data.conn_rate.subrate_factor);
+	p->latency = sys_cpu_to_le16(ctx->data.conn_rate.latency);
+	p->continuation_number = sys_cpu_to_le16(ctx->data.conn_rate.continuation_number);
+	p->timeout = sys_cpu_to_le16(ctx->data.conn_rate.timeout);
+}
+
+void llcp_pdu_decode_conn_rate_ind(struct proc_ctx *ctx, struct pdu_data *pdu)
+{
+	struct pdu_data_llctrl_conn_rate_ind *p = &pdu->llctrl.conn_rate_ind;
+	uint16_t interval;
+
+	ctx->data.conn_rate.error = BT_HCI_ERR_SUCCESS;
+
+	if (!conn_rate_interval_from_125us(sys_le16_to_cpu(p->interval), &interval)) {
+		ctx->data.conn_rate.error = BT_HCI_ERR_UNSUPP_LL_PARAM_VAL;
+		return;
+	}
+
+	ctx->data.conn_rate.win_offset_us = (uint32_t)sys_le16_to_cpu(p->win_offset) * 125U;
+	ctx->data.conn_rate.interval = interval;
+	ctx->data.conn_rate.instant = sys_le16_to_cpu(p->instant);
+	ctx->data.conn_rate.subrate_factor = sys_le16_to_cpu(p->subrate_factor);
+	ctx->data.conn_rate.latency = sys_le16_to_cpu(p->latency);
+	ctx->data.conn_rate.continuation_number = sys_le16_to_cpu(p->continuation_number);
+	ctx->data.conn_rate.timeout = sys_le16_to_cpu(p->timeout);
+}
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
