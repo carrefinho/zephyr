@@ -697,6 +697,28 @@ uint8_t ull_cp_feature_exchange(struct ll_conn *conn, uint8_t host_initiated)
 }
 #endif /* CONFIG_BT_CENTRAL || CONFIG_BT_CTLR_PER_INIT_FEAT_XCHG */
 
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+uint8_t ull_cp_feature_page_exchange(struct ll_conn *conn, uint8_t pages_requested,
+				     uint8_t host_initiated)
+{
+	struct proc_ctx *ctx;
+
+	ctx = llcp_create_local_procedure(PROC_FEATURE_PAGE_EXCHANGE);
+	if (!ctx) {
+		return BT_HCI_ERR_CMD_DISALLOWED;
+	}
+
+	/* Page 1 only for now; multi-page walk is deferred */
+	ctx->data.fpx.page = 1U;
+	ctx->data.fpx.pages_requested = (pages_requested > 1U) ? 1U : pages_requested;
+	ctx->data.fpx.host_initiated = host_initiated;
+
+	llcp_lr_enqueue(conn, ctx);
+
+	return BT_HCI_ERR_SUCCESS;
+}
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
+
 uint8_t ull_cp_version_exchange(struct ll_conn *conn)
 {
 	struct proc_ctx *ctx;

@@ -175,6 +175,12 @@ static void lp_comm_tx(struct ll_conn *conn, struct proc_ctx *ctx)
 		llcp_pdu_encode_feature_req(conn, pdu);
 		ctx->rx_opcode = PDU_DATA_LLCTRL_TYPE_FEATURE_RSP;
 		break;
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	case PROC_FEATURE_PAGE_EXCHANGE:
+		llcp_pdu_encode_feature_ext_req(conn, ctx, pdu);
+		ctx->rx_opcode = PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_RSP;
+		break;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 #if defined(CONFIG_BT_CTLR_MIN_USED_CHAN) && defined(CONFIG_BT_PERIPHERAL)
 	case PROC_MIN_USED_CHANS:
 		llcp_pdu_encode_min_used_chans_ind(ctx, pdu);
@@ -475,6 +481,22 @@ static void lp_comm_complete(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 			lp_comm_terminate_invalid_pdu(conn, ctx);
 		}
 		break;
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	case PROC_FEATURE_PAGE_EXCHANGE:
+		/* UNKNOWN_RSP means the peer does not support the Extended
+		 * Feature Set; complete gracefully with page 0 only.
+		 * No per-page host notification is generated (deferred).
+		 */
+		if ((ctx->response_opcode == PDU_DATA_LLCTRL_TYPE_UNKNOWN_RSP ||
+		     ctx->response_opcode == PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_RSP)) {
+			llcp_lr_complete(conn);
+			ctx->state = LP_COMMON_STATE_IDLE;
+		} else {
+			/* Illegal response opcode */
+			lp_comm_terminate_invalid_pdu(conn, ctx);
+		}
+		break;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 #if defined(CONFIG_BT_CTLR_MIN_USED_CHAN) && defined(CONFIG_BT_PERIPHERAL)
 	case PROC_MIN_USED_CHANS:
 		llcp_lr_complete(conn);
@@ -622,6 +644,11 @@ static void lp_comm_send_req(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 	case PROC_FEATURE_EXCHANGE:
 		lp_comm_tx_proxy(conn, ctx, false);
 		break;
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	case PROC_FEATURE_PAGE_EXCHANGE:
+		lp_comm_tx_proxy(conn, ctx, false);
+		break;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 #if defined(CONFIG_BT_CTLR_MIN_USED_CHAN) && defined(CONFIG_BT_PERIPHERAL)
 	case PROC_MIN_USED_CHANS:
 		lp_comm_tx_proxy(conn, ctx, false);
@@ -806,6 +833,11 @@ static void lp_comm_rx_decode(struct ll_conn *conn, struct proc_ctx *ctx, struct
 		}
 #endif /* CONFIG_BT_CTLR_DATA_LENGTH && CONFIG_BT_CTLR_PHY */
 		break;
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	case PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_RSP:
+		llcp_pdu_decode_feature_ext_rsp(conn, ctx, pdu);
+		break;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 #if defined(CONFIG_BT_CTLR_MIN_USED_CHAN)
 	case PDU_DATA_LLCTRL_TYPE_MIN_USED_CHAN_IND:
 		/* No response expected */
@@ -987,6 +1019,11 @@ static void rp_comm_rx_decode(struct ll_conn *conn, struct proc_ctx *ctx, struct
 #endif /* CONFIG_BT_CTLR_DATA_LENGTH && CONFIG_BT_CTLR_PHY */
 		break;
 #endif /* CONFIG_BT_PERIPHERAL || (CONFIG_BT_CTLR_PER_INIT_FEAT_XCHG && CONFIG_BT_CENTRAL) */
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	case PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_REQ:
+		llcp_pdu_decode_feature_ext_req(conn, ctx, pdu);
+		break;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 #if defined(CONFIG_BT_CTLR_MIN_USED_CHAN) && defined(CONFIG_BT_CENTRAL)
 	case PDU_DATA_LLCTRL_TYPE_MIN_USED_CHAN_IND:
 		llcp_pdu_decode_min_used_chans_ind(conn, pdu);
@@ -1061,6 +1098,12 @@ static void rp_comm_tx(struct ll_conn *conn, struct proc_ctx *ctx)
 		llcp_pdu_encode_feature_rsp(conn, pdu);
 		ctx->rx_opcode = PDU_DATA_LLCTRL_TYPE_UNUSED;
 		break;
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	case PROC_FEATURE_PAGE_EXCHANGE:
+		llcp_pdu_encode_feature_ext_rsp(conn, ctx, pdu);
+		ctx->rx_opcode = PDU_DATA_LLCTRL_TYPE_UNUSED;
+		break;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 	case PROC_VERSION_EXCHANGE:
 		llcp_pdu_encode_version_ind(pdu);
 		ctx->rx_opcode = PDU_DATA_LLCTRL_TYPE_UNUSED;
@@ -1198,6 +1241,12 @@ static void rp_comm_send_rsp(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 		/* Always respond on remote feature exchange */
 		rp_comm_tx_proxy(conn, ctx, true);
 		break;
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	case PROC_FEATURE_PAGE_EXCHANGE:
+		/* Always respond on remote feature page exchange */
+		rp_comm_tx_proxy(conn, ctx, true);
+		break;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 	case PROC_VERSION_EXCHANGE:
 		/* The Link Layer shall only queue for transmission a maximum of one
 		 * LL_VERSION_IND PDU during a connection.

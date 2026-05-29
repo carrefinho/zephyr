@@ -31,6 +31,9 @@ enum llcp_proc {
 	PROC_SCA_UPDATE,
 	PROC_PERIODIC_SYNC,
 	PROC_SUBRATE_UPDATE,
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	PROC_FEATURE_PAGE_EXCHANGE,
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 	/* A helper enum entry, to use in pause procedure context */
 	PROC_NONE = 0x0,
 };
@@ -189,6 +192,15 @@ struct proc_ctx {
 		struct {
 			uint8_t host_initiated:1;
 		} fex;
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+		/* Feature Page Exchange Procedure (LL Extended Feature Set) */
+		struct {
+			uint8_t page;
+			uint8_t peer_max_page;
+			uint8_t pages_requested;
+			uint8_t host_initiated:1;
+		} fpx;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 		/* Used by Minimum Used Channels Procedure */
 #if defined(CONFIG_BT_CTLR_MIN_USED_CHAN)
 		struct {
@@ -659,6 +671,20 @@ void llcp_pdu_decode_feature_req(struct ll_conn *conn,
 					struct pdu_data *pdu);
 void llcp_pdu_decode_feature_rsp(struct ll_conn *conn,
 					struct pdu_data *pdu);
+
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+/*
+ * Feature Page Exchange Procedure Helper (LL Extended Feature Set)
+ */
+void llcp_pdu_encode_feature_ext_req(struct ll_conn *conn, struct proc_ctx *ctx,
+				     struct pdu_data *pdu);
+void llcp_pdu_encode_feature_ext_rsp(struct ll_conn *conn, struct proc_ctx *ctx,
+				     struct pdu_data *pdu);
+void llcp_pdu_decode_feature_ext_req(struct ll_conn *conn, struct proc_ctx *ctx,
+				     struct pdu_data *pdu);
+void llcp_pdu_decode_feature_ext_rsp(struct ll_conn *conn, struct proc_ctx *ctx,
+				     struct pdu_data *pdu);
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 
 #if defined(CONFIG_BT_CTLR_MIN_USED_CHAN)
 /*

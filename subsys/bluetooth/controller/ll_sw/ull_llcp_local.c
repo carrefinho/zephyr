@@ -296,6 +296,11 @@ void llcp_lr_rx(struct ll_conn *conn, struct proc_ctx *ctx, memq_link_t *link,
 	case PROC_FEATURE_EXCHANGE:
 		llcp_lp_comm_rx(conn, ctx, rx);
 		break;
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	case PROC_FEATURE_PAGE_EXCHANGE:
+		llcp_lp_comm_rx(conn, ctx, rx);
+		break;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 #if defined(CONFIG_BT_CTLR_MIN_USED_CHAN)
 	case PROC_MIN_USED_CHANS:
 		llcp_lp_comm_rx(conn, ctx, rx);
@@ -449,6 +454,11 @@ static void lr_act_run(struct ll_conn *conn)
 	case PROC_FEATURE_EXCHANGE:
 		llcp_lp_comm_run(conn, ctx, NULL);
 		break;
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	case PROC_FEATURE_PAGE_EXCHANGE:
+		llcp_lp_comm_run(conn, ctx, NULL);
+		break;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 #if defined(CONFIG_BT_CTLR_MIN_USED_CHAN)
 	case PROC_MIN_USED_CHANS:
 		llcp_lp_comm_run(conn, ctx, NULL);

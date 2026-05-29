@@ -20,6 +20,15 @@ void ll_reset(void);
 uint8_t ll_set_host_feature(uint8_t bit_number, uint8_t bit_value);
 uint64_t ll_feat_get(void);
 
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+/* LL Extended Feature Set (Core 6.0) page accessors. Page 0 is the legacy
+ * uint64 returned by ll_feat_get(); pages >= 1 are returned as a raw 24-octet
+ * (== BT_HCI_LE_BYTES_PER_FEATURE_PAGE) slice.
+ */
+void ll_feat_get_page(uint8_t page, uint8_t *out);
+uint8_t ll_feat_local_max_page(void);
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
+
 /* Device Address Interfaces */
 uint8_t ll_addr_set(uint8_t addr_type, uint8_t const *const p_bdaddr);
 uint8_t *ll_addr_get(uint8_t addr_type);

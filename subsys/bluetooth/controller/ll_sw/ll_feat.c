@@ -87,3 +87,48 @@ uint64_t ll_feat_get(void)
 }
 
 #endif /* !CONFIG_BT_CTLR_SET_HOST_FEATURE */
+
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+/* LL Extended Feature Set (Core 6.0): return the 24-octet feature page 'page'.
+ * Page 0 (the legacy uint64) is handled by ll_feat_get() and not produced here.
+ * 24 == BT_HCI_LE_BYTES_PER_FEATURE_PAGE; literal used to avoid include-order
+ * dependency on <zephyr/bluetooth/hci_types.h>.
+ */
+void ll_feat_get_page(uint8_t page, uint8_t *out)
+{
+	memset(out, 0, 24);
+
+	switch (page) {
+	case 1:
+		/* No page-1 feature bits supported yet. As bits are added,
+		 * set them here, e.g. for feature bit BIT (>= 64):
+		 *   out[(BIT - 64) / 8] |= BIT((BIT) & 7);
+		 */
+		break;
+	default:
+		/* Unsupported page, leave all-zero */
+		break;
+	}
+}
+
+uint8_t ll_feat_local_max_page(void)
+{
+	uint8_t features[24];
+	uint8_t page;
+
+	/* Return the highest local feature page (1..CONFIG_BT_CTLR_LOCAL_FEATURE_PAGE)
+	 * that has any feature bit set; else 0 (only page 0 present).
+	 */
+	for (page = CONFIG_BT_CTLR_LOCAL_FEATURE_PAGE; page >= 1U; page--) {
+		ll_feat_get_page(page, features);
+
+		for (uint8_t i = 0U; i < 24U; i++) {
+			if (features[i] != 0U) {
+				return page;
+			}
+		}
+	}
+
+	return 0U;
+}
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */

@@ -84,6 +84,14 @@ uint8_t ull_cp_version_exchange(struct ll_conn *conn);
  */
 uint8_t ull_cp_feature_exchange(struct ll_conn *conn, uint8_t host_initiated);
 
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+/**
+ * @brief Initiate a Feature Page Exchange Procedure (LL Extended Feature Set).
+ */
+uint8_t ull_cp_feature_page_exchange(struct ll_conn *conn, uint8_t pages_requested,
+				     uint8_t host_initiated);
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
+
 #if defined(CONFIG_BT_CTLR_MIN_USED_CHAN)
 /**
  * @brief Initiate a Minimum used channels Procedure.
