@@ -204,6 +204,9 @@ struct ll_conn {
 #if defined(CONFIG_BT_CTLR_CONN_META)
 			uint8_t  is_must_expire:1;
 #endif /* CONFIG_BT_CTLR_CONN_META */
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+			uint8_t  latency_cancel:1;
+#endif /* CONFIG_BT_CTLR_SUBRATING */
 		} central;
 #endif /* CONFIG_BT_CENTRAL */
 	};

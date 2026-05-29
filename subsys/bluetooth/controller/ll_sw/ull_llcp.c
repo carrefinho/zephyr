@@ -59,6 +59,7 @@
 #include "ull_llcp_features.h"
 #include "ull_llcp_internal.h"
 #include "ull_peripheral_internal.h"
+#include "ull_central_internal.h"
 #include "ull_sync_internal.h"
 
 #include "ull_filter.h"
@@ -1132,6 +1133,13 @@ uint8_t ull_cp_conn_update(struct ll_conn *conn, uint16_t interval_min, uint16_t
 			uint16_t handle = ll_conn_handle_get(conn);
 
 			ull_periph_latency_cancel(conn, handle);
+#if defined(CONFIG_BT_CENTRAL) && defined(CONFIG_BT_CTLR_SUBRATING)
+		} else if (IS_ENABLED(CONFIG_BT_CENTRAL) &&
+			   (conn->lll.role == BT_HCI_ROLE_CENTRAL)) {
+			uint16_t handle = ll_conn_handle_get(conn);
+
+			ull_central_latency_cancel(conn, handle);
+#endif /* CONFIG_BT_CENTRAL && CONFIG_BT_CTLR_SUBRATING */
 		}
 #endif /* CONFIG_BT_CTLR_CONN_PARAM_REQ */
 	} else {

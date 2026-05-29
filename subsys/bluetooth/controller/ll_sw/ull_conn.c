@@ -282,6 +282,11 @@ int ll_tx_mem_enqueue(uint16_t handle, void *tx)
 
 	if (IS_ENABLED(CONFIG_BT_PERIPHERAL) && conn->lll.role) {
 		ull_periph_latency_cancel(conn, handle);
+#if defined(CONFIG_BT_CENTRAL) && defined(CONFIG_BT_CTLR_SUBRATING)
+	} else if (IS_ENABLED(CONFIG_BT_CENTRAL) &&
+		   (conn->lll.role == BT_HCI_ROLE_CENTRAL)) {
+		ull_central_latency_cancel(conn, handle);
+#endif /* CONFIG_BT_CENTRAL && CONFIG_BT_CTLR_SUBRATING */
 	}
 
 #if defined(CONFIG_BT_CTLR_THROUGHPUT)
@@ -335,6 +340,11 @@ uint8_t ll_conn_update(uint16_t handle, uint8_t cmd, uint8_t status, uint16_t in
 		if (IS_ENABLED(CONFIG_BT_PERIPHERAL) &&
 		    conn->lll.role) {
 			ull_periph_latency_cancel(conn, handle);
+#if defined(CONFIG_BT_CENTRAL) && defined(CONFIG_BT_CTLR_SUBRATING)
+		} else if (IS_ENABLED(CONFIG_BT_CENTRAL) &&
+			   (conn->lll.role == BT_HCI_ROLE_CENTRAL)) {
+			ull_central_latency_cancel(conn, handle);
+#endif /* CONFIG_BT_CENTRAL && CONFIG_BT_CTLR_SUBRATING */
 		}
 	} else if (cmd == 2U) {
 #if defined(CONFIG_BT_CTLR_CONN_PARAM_REQ)
@@ -546,6 +556,11 @@ uint8_t ll_terminate_ind_send(uint16_t handle, uint8_t reason)
 
 		if (IS_ENABLED(CONFIG_BT_PERIPHERAL) && conn->lll.role) {
 			ull_periph_latency_cancel(conn, handle);
+#if defined(CONFIG_BT_CENTRAL) && defined(CONFIG_BT_CTLR_SUBRATING)
+		} else if (IS_ENABLED(CONFIG_BT_CENTRAL) &&
+			   (conn->lll.role == BT_HCI_ROLE_CENTRAL)) {
+			ull_central_latency_cancel(conn, handle);
+#endif /* CONFIG_BT_CENTRAL && CONFIG_BT_CTLR_SUBRATING */
 		}
 		return 0;
 	}
@@ -638,6 +653,11 @@ uint8_t ll_feature_req_send(uint16_t handle)
 	    IS_ENABLED(CONFIG_BT_CTLR_PER_INIT_FEAT_XCHG) &&
 	    conn->lll.role) {
 		ull_periph_latency_cancel(conn, handle);
+#if defined(CONFIG_BT_CENTRAL) && defined(CONFIG_BT_CTLR_SUBRATING)
+	} else if (IS_ENABLED(CONFIG_BT_CENTRAL) &&
+		   (conn->lll.role == BT_HCI_ROLE_CENTRAL)) {
+		ull_central_latency_cancel(conn, handle);
+#endif /* CONFIG_BT_CENTRAL && CONFIG_BT_CTLR_SUBRATING */
 	}
 
 	return 0;
@@ -663,6 +683,11 @@ uint8_t ll_feature_page_req_send(uint16_t handle, uint8_t pages_requested)
 	    IS_ENABLED(CONFIG_BT_CTLR_PER_INIT_FEAT_XCHG) &&
 	    conn->lll.role) {
 		ull_periph_latency_cancel(conn, handle);
+#if defined(CONFIG_BT_CENTRAL) && defined(CONFIG_BT_CTLR_SUBRATING)
+	} else if (IS_ENABLED(CONFIG_BT_CENTRAL) &&
+		   (conn->lll.role == BT_HCI_ROLE_CENTRAL)) {
+		ull_central_latency_cancel(conn, handle);
+#endif /* CONFIG_BT_CENTRAL && CONFIG_BT_CTLR_SUBRATING */
 	}
 
 	return 0;
@@ -688,6 +713,11 @@ uint8_t ll_version_ind_send(uint16_t handle)
 
 	if (IS_ENABLED(CONFIG_BT_PERIPHERAL) && conn->lll.role) {
 		ull_periph_latency_cancel(conn, handle);
+#if defined(CONFIG_BT_CENTRAL) && defined(CONFIG_BT_CTLR_SUBRATING)
+	} else if (IS_ENABLED(CONFIG_BT_CENTRAL) &&
+		   (conn->lll.role == BT_HCI_ROLE_CENTRAL)) {
+		ull_central_latency_cancel(conn, handle);
+#endif /* CONFIG_BT_CENTRAL && CONFIG_BT_CTLR_SUBRATING */
 	}
 
 	return 0;
@@ -738,6 +768,11 @@ uint8_t ll_length_req_send(uint16_t handle, uint16_t tx_octets, uint16_t tx_time
 
 	if (IS_ENABLED(CONFIG_BT_PERIPHERAL) && conn->lll.role) {
 		ull_periph_latency_cancel(conn, handle);
+#if defined(CONFIG_BT_CENTRAL) && defined(CONFIG_BT_CTLR_SUBRATING)
+	} else if (IS_ENABLED(CONFIG_BT_CENTRAL) &&
+		   (conn->lll.role == BT_HCI_ROLE_CENTRAL)) {
+		ull_central_latency_cancel(conn, handle);
+#endif /* CONFIG_BT_CENTRAL && CONFIG_BT_CTLR_SUBRATING */
 	}
 
 	return 0;
@@ -827,6 +862,11 @@ uint8_t ll_phy_req_send(uint16_t handle, uint8_t tx, uint8_t flags, uint8_t rx)
 
 	if (IS_ENABLED(CONFIG_BT_PERIPHERAL) && conn->lll.role) {
 		ull_periph_latency_cancel(conn, handle);
+#if defined(CONFIG_BT_CENTRAL) && defined(CONFIG_BT_CTLR_SUBRATING)
+	} else if (IS_ENABLED(CONFIG_BT_CENTRAL) &&
+		   (conn->lll.role == BT_HCI_ROLE_CENTRAL)) {
+		ull_central_latency_cancel(conn, handle);
+#endif /* CONFIG_BT_CENTRAL && CONFIG_BT_CTLR_SUBRATING */
 	}
 
 	return 0;
@@ -1382,17 +1422,36 @@ void ull_conn_done(struct node_rx_event_done *done)
 #endif /* CONFIG_BT_PERIPHERAL */
 #if defined(CONFIG_BT_CENTRAL) && defined(CONFIG_BT_CTLR_SUBRATING)
 		} else if (lll->role == BT_HCI_ROLE_CENTRAL) {
-			/* Central-side subrated event skipping (Phase 3). Steady
-			 * state only, so a connection update instant is never
-			 * skipped past. The Central stays present on every subrated
-			 * event (the helper applies no peripheral-latency stacking
-			 * for the Central role). When not subrating, fall back to
-			 * presence on every event (latency_event 0).
+			bool have_tx;
+
+			/* Central with pending host TX/control: drop the subrated
+			 * skip and stay present on EVERY connection event until the
+			 * tx_q + LLL memq drain, so a host GATT read is not held to
+			 * the scheduled subrated rendezvous (the ~98 ms nRF54L floor).
+			 * Unlike the Peripheral (which keeps the subrated-event
+			 * cadence and only drops peripheral_latency stacking), the
+			 * Central pulls fully to every event because it owns the
+			 * anchor. base_event is re-anchored from the live event
+			 * counter whenever the helper next runs, so skipping it during
+			 * the drain causes no drift.
 			 */
+			if (!ull_tx_q_peek(&conn->tx_q)) {
+				ull_conn_tx_demux(UINT8_MAX);
+			}
+
+			have_tx = ull_tx_q_peek(&conn->tx_q) ||
+				  memq_peek(lll->memq_tx.head,
+					    lll->memq_tx.tail, NULL);
+
 			if ((conn->subrate.factor > 1U) &&
 			    !llcp_lr_peek(conn) && !llcp_rr_peek(conn)) {
-				lll->latency_event = conn_subrate_latency_event(
-					conn, done->extra.has_nonempty_pdu, false);
+				if (have_tx) {
+					lll->latency_event = 0U;
+				} else {
+					lll->latency_event = conn_subrate_latency_event(
+						conn, done->extra.has_nonempty_pdu,
+						false);
+				}
 			} else {
 				lll->latency_event = 0U;
 			}
