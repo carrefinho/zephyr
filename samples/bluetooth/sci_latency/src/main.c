@@ -59,6 +59,16 @@ static K_SEM_DEFINE(sem_feat, 0, 1);
 static K_SEM_DEFINE(sem_conn_rate, 0, 1);
 static K_SEM_DEFINE(sem_subrate, 0, 1);
 static K_SEM_DEFINE(sem_read, 0, 1);
+#if defined(CONFIG_SCI_LATENCY_PLAIN_SUBRATE)
+static K_SEM_DEFINE(sem_param, 0, 1);
+/* 7.5 ms in 1.25 ms units (BT_HCI_LE_INTERVAL_MIN -- the shortest standard,
+ * non-SCI connection interval; the control for "is it SCI or subrating?").
+ */
+#define PLAIN_INTERVAL_125MS    6U
+#define BASE_INTERVAL_US        7500U
+#else
+#define BASE_INTERVAL_US        1250U
+#endif
 
 static volatile uint8_t conn_rate_status = 0xFFU;
 static volatile uint8_t subrate_status = 0xFFU;
@@ -153,12 +163,25 @@ static void subrate_changed(struct bt_conn *conn,
 	k_sem_give(&sem_subrate);
 }
 
+#if defined(CONFIG_SCI_LATENCY_PLAIN_SUBRATE)
+static void le_param_updated(struct bt_conn *conn, uint16_t interval,
+			     uint16_t latency, uint16_t timeout)
+{
+	if (interval == PLAIN_INTERVAL_125MS) {
+		k_sem_give(&sem_param);
+	}
+}
+#endif
+
 static struct bt_conn_cb conn_callbacks = {
 	.connected = connected,
 	.disconnected = disconnected,
 	.read_all_remote_feat_complete = read_all_remote_feat_complete,
 	.conn_rate_changed = conn_rate_changed,
 	.subrate_changed = subrate_changed,
+#if defined(CONFIG_SCI_LATENCY_PLAIN_SUBRATE)
+	.le_param_updated = le_param_updated,
+#endif
 };
 
 static uint8_t read_cb(struct bt_conn *conn, uint8_t att_err,
@@ -302,6 +325,25 @@ int main(void)
 	}
 	k_sleep(K_MSEC(200));
 
+#if defined(CONFIG_SCI_LATENCY_PLAIN_SUBRATE)
+	/* CONTROL: no SCI. Standard param update to 7.5 ms, then sweep subrate.
+	 * Isolates the original subrating path from the SCI/1.25 ms interaction.
+	 */
+	ARG_UNUSED(rate);
+	err = bt_conn_le_param_update(
+		default_conn,
+		BT_LE_CONN_PARAM(PLAIN_INTERVAL_125MS, PLAIN_INTERVAL_125MS, 0U,
+				 SCI_TIMEOUT_10MS));
+	if (err) {
+		LOG_ERR("param update failed (err %d)", err);
+		return 0;
+	}
+	if (k_sem_take(&sem_param, K_SECONDS(5)) != 0) {
+		LOG_ERR("param update to 7.5 ms not applied");
+		return 0;
+	}
+	LOG_INF("Link now at 7.5 ms (PLAIN subrate control). Sweeping subrate factor.");
+#else
 	err = bt_conn_le_conn_rate_request(default_conn, &rate);
 	if (err) {
 		LOG_ERR("conn rate request failed (err %d)", err);
@@ -313,6 +355,7 @@ int main(void)
 		return 0;
 	}
 	LOG_INF("Link now at 1.25 ms. Sweeping subrate factor (round-trip GATT read).");
+#endif
 	LOG_INF("  idle  = isolated reads (peer sleeps between) -- continuation 0");
 	LOG_INF("  burst = back-to-back reads (peer stays awake) -- continuation factor-1");
 	LOG_INF("factor | effective | idle min/avg/max us | burst min/avg/max us");
@@ -334,8 +377,8 @@ int main(void)
 			break;
 		}
 
-		LOG_INF("%6u | %6u ms | %6d/%6d/%6d | %6d/%6d/%6d",
-			f, (f * 5U) / 4U, imn, iavg, imx, bmn, bavg, bmx);
+		LOG_INF("%6u | %6u us | %6d/%6d/%6d | %6d/%6d/%6d",
+			f, f * BASE_INTERVAL_US, imn, iavg, imx, bmn, bavg, bmx);
 
 		if (!default_conn) {
 			LOG_ERR("link dropped during sweep");

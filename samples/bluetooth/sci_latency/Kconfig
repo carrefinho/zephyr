@@ -10,4 +10,15 @@ config SCI_LATENCY_CENTRAL
 	  sweeps the subrate factor and logs round-trip GATT latency over the VCOM
 	  UART. When unset, this build is the Peripheral that advertises and accepts.
 
+config SCI_LATENCY_PLAIN_SUBRATE
+	bool "Control: plain subrating at 7.5 ms (no SCI / Connection Rate Update)"
+	depends on SCI_LATENCY_CENTRAL
+	help
+	  Isolation control. Instead of the SCI Connection Rate Update to 1.25 ms,
+	  the Central does a standard LE connection parameter update to a 7.5 ms
+	  interval (BT_HCI_LE_INTERVAL_MIN, no SCI involved) and then sweeps the
+	  subrate factor. This exercises only the original subrating path, so a clean
+	  factor*interval result here vs a high floor on the 1.25 ms SCI build
+	  pinpoints whether the latency is the SCI interaction or subrating itself.
+
 source "Kconfig.zephyr"
