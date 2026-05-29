@@ -2671,6 +2671,46 @@ static void le_subrate_request(struct net_buf *buf, struct net_buf **evt)
 }
 #endif /* CONFIG_BT_CTLR_SUBRATING */
 
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+static void le_set_default_rate_parameters(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_op_le_set_default_rate_parameters *cmd = (void *)buf->data;
+	uint8_t *rp;
+	uint8_t status;
+
+	status = ll_conn_rate_defaults_set(sys_le16_to_cpu(cmd->conn_interval_min),
+					   sys_le16_to_cpu(cmd->conn_interval_max),
+					   sys_le16_to_cpu(cmd->subrate_min),
+					   sys_le16_to_cpu(cmd->subrate_max),
+					   sys_le16_to_cpu(cmd->max_latency),
+					   sys_le16_to_cpu(cmd->continuation_number),
+					   sys_le16_to_cpu(cmd->supervision_timeout));
+
+	rp = hci_cmd_complete(evt, sizeof(*rp));
+	*rp = status;
+}
+
+static void le_connection_rate_request(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_op_le_connection_rate_request *cmd = (void *)buf->data;
+	uint16_t handle;
+	uint8_t status;
+
+	handle = sys_le16_to_cpu(cmd->handle);
+
+	status = ll_conn_rate_req_send(handle,
+				       sys_le16_to_cpu(cmd->conn_interval_min),
+				       sys_le16_to_cpu(cmd->conn_interval_max),
+				       sys_le16_to_cpu(cmd->subrate_min),
+				       sys_le16_to_cpu(cmd->subrate_max),
+				       sys_le16_to_cpu(cmd->max_latency),
+				       sys_le16_to_cpu(cmd->continuation_number),
+				       sys_le16_to_cpu(cmd->supervision_timeout));
+
+	*evt = cmd_status(status);
+}
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
 #if defined(CONFIG_BT_CTLR_CONN_PARAM_REQ)
 static void le_conn_param_req_reply(struct net_buf *buf, struct net_buf **evt)
 {
@@ -4838,6 +4878,16 @@ static int controller_cmd_handle(uint16_t  ocf, struct net_buf *cmd,
 		le_subrate_request(cmd, evt);
 		break;
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	case BT_OCF(BT_HCI_OP_LE_SET_DEFAULT_RATE_PARAMETERS):
+		le_set_default_rate_parameters(cmd, evt);
+		break;
+
+	case BT_OCF(BT_HCI_OP_LE_CONNECTION_RATE_REQUEST):
+		le_connection_rate_request(cmd, evt);
+		break;
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
 #if defined(CONFIG_BT_CTLR_DATA_LENGTH)
 	case BT_OCF(BT_HCI_OP_LE_SET_DATA_LEN):

@@ -271,6 +271,18 @@ uint8_t ll_subrate_req(uint16_t handle, uint16_t subrate_min, uint16_t subrate_m
 		       uint16_t max_latency, uint16_t continuation_number,
 		       uint16_t supervision_timeout);
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+/* conn_interval_min/max are in 125 us units (HCI 0x20A1/0x20A2); the controller
+ * enforces the RCV grid (multiples of 10) and converts to internal units.
+ */
+uint8_t ll_conn_rate_defaults_set(uint16_t conn_interval_min, uint16_t conn_interval_max,
+				  uint16_t subrate_min, uint16_t subrate_max, uint16_t max_latency,
+				  uint16_t continuation_number, uint16_t supervision_timeout);
+uint8_t ll_conn_rate_req_send(uint16_t handle, uint16_t conn_interval_min,
+			      uint16_t conn_interval_max, uint16_t subrate_min,
+			      uint16_t subrate_max, uint16_t max_latency,
+			      uint16_t continuation_number, uint16_t supervision_timeout);
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 uint8_t ll_chm_update(uint8_t const *const chm);
 uint8_t ll_chm_get(uint16_t handle, uint8_t *const chm);
 uint8_t ll_enc_req_send(uint16_t handle, uint8_t const *const rand_num, uint8_t const *const ediv,
