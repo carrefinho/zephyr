@@ -1125,6 +1125,13 @@ static void read_supported_commands(struct net_buf *buf, struct net_buf **evt)
 	/* Read Supported Codecs [v2], Codec Capabilities, Controller Delay, Configure Data Path */
 	rp->commands[45] |= BIT(2) | BIT(3) | BIT(4) | BIT(5);
 #endif /* CONFIG_BT_CTLR_HCI_CODEC_AND_DELAY_INFO */
+
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	/* LE Read All Local Supported Features (octet 47 bit 2),
+	 * LE Read All Remote Features (octet 47 bit 3)
+	 */
+	rp->commands[47] |= BIT(2) | BIT(3);
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 }
 
 static void read_local_features(struct net_buf *buf, struct net_buf **evt)
@@ -1464,6 +1471,32 @@ static void le_read_local_features(struct net_buf *buf, struct net_buf **evt)
 	(void)memset(&rp->features[0], 0x00, sizeof(rp->features));
 	sys_put_le64(ll_feat_get(), rp->features);
 }
+
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+static void le_read_all_local_supported_features(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_rp_le_read_all_local_supported_features *rp;
+	uint8_t max_page;
+
+	rp = hci_cmd_complete(evt, sizeof(*rp));
+
+	rp->status = 0x00;
+
+	max_page = ll_feat_local_max_page();
+	rp->max_page = max_page;
+
+	/* 248-octet feature field: page 0 is the legacy uint64 (octets 0..7),
+	 * pages 1..max_page are the 24-octet ext slices that follow it.
+	 */
+	(void)memset(&rp->features[0], 0x00, sizeof(rp->features));
+	sys_put_le64(ll_feat_get(), &rp->features[0]);
+	for (uint8_t page = 1U; page <= max_page; page++) {
+		ll_feat_get_page(page,
+				 &rp->features[BT_HCI_LE_BYTES_PAGE_0_FEATURE_PAGE +
+					       (page - 1U) * BT_HCI_LE_BYTES_PER_FEATURE_PAGE]);
+	}
+}
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 
 static void le_set_random_address(struct net_buf *buf, struct net_buf **evt)
 {
@@ -2549,6 +2582,20 @@ static void le_read_remote_features(struct net_buf *buf, struct net_buf **evt)
 
 	*evt = cmd_status(status);
 }
+
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+static void le_read_all_remote_features(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_cp_le_read_all_remote_features *cmd = (void *)buf->data;
+	uint16_t handle;
+	uint8_t status;
+
+	handle = sys_le16_to_cpu(cmd->handle);
+	status = ll_feature_page_req_send(handle, cmd->pages_requested);
+
+	*evt = cmd_status(status);
+}
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 #endif /* CONFIG_BT_CENTRAL || CONFIG_BT_CTLR_PER_INIT_FEAT_XCHG */
 
 static void le_read_chan_map(struct net_buf *buf, struct net_buf **evt)
@@ -4600,6 +4647,12 @@ static int controller_cmd_handle(uint16_t  ocf, struct net_buf *cmd,
 		le_read_local_features(cmd, evt);
 		break;
 
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	case BT_OCF(BT_HCI_OP_LE_READ_ALL_LOCAL_SUPPORTED_FEATURES):
+		le_read_all_local_supported_features(cmd, evt);
+		break;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
+
 	case BT_OCF(BT_HCI_OP_LE_SET_RANDOM_ADDRESS):
 		le_set_random_address(cmd, evt);
 		break;
@@ -4804,6 +4857,12 @@ static int controller_cmd_handle(uint16_t  ocf, struct net_buf *cmd,
 	case BT_OCF(BT_HCI_OP_LE_READ_REMOTE_FEATURES):
 		le_read_remote_features(cmd, evt);
 		break;
+
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	case BT_OCF(BT_HCI_OP_LE_READ_ALL_REMOTE_FEATURES):
+		le_read_all_remote_features(cmd, evt);
+		break;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 #endif /* CONFIG_BT_CENTRAL || CONFIG_BT_CTLR_PER_INIT_FEAT_XCHG */
 
 	case BT_OCF(BT_HCI_OP_LE_CONN_UPDATE):
@@ -8678,6 +8737,44 @@ static void le_subrate_change_event(struct pdu_data *pdu_data, uint16_t handle,
 }
 #endif /* CONFIG_BT_CTLR_SUBRATING */
 
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+static void le_read_all_remote_feat_complete(struct pdu_data *pdu_data, uint16_t handle,
+					     struct net_buf *buf)
+{
+	struct bt_hci_evt_le_read_all_remote_feat_complete *sep;
+	struct node_rx_read_all_remote_feat *nr;
+	void *node;
+
+	if (!(event_mask & BT_EVT_MASK_LE_META_EVENT) ||
+	    !(le_event_mask & BT_EVT_MASK_LE_READ_ALL_REMOTE_FEAT_COMPLETE)) {
+		return;
+	}
+
+	sep = meta_evt(buf, BT_HCI_EVT_LE_READ_ALL_REMOTE_FEAT_COMPLETE, sizeof(*sep));
+
+	/* Check for pdu field being aligned before accessing the carried node. */
+	node = pdu_data;
+	LL_ASSERT(IS_PTR_ALIGNED(node, struct node_rx_read_all_remote_feat));
+
+	nr = node;
+	sep->status = nr->status;
+	sep->handle = sys_cpu_to_le16(handle);
+	sep->max_remote_page = nr->max_remote_page;
+	sep->max_valid_page = nr->max_valid_page;
+
+	/* Expand the stored pages into the 248-octet host feature field:
+	 * page 0 is the legacy 8 octets (0..7), page 1 the 24-octet ext slice
+	 * (8..31). Both are already in little-endian wire form. Higher pages
+	 * are not exchanged and stay zero.
+	 */
+	(void)memset(&sep->features[0], 0x00, sizeof(sep->features));
+	memcpy(&sep->features[0], nr->features_page_0,
+	       BT_HCI_LE_BYTES_PAGE_0_FEATURE_PAGE);
+	memcpy(&sep->features[BT_HCI_LE_BYTES_PAGE_0_FEATURE_PAGE], nr->features_page_1,
+	       BT_HCI_LE_BYTES_PER_FEATURE_PAGE);
+}
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
+
 #if defined(CONFIG_BT_CTLR_LE_ENC)
 static void enc_refresh_complete(struct pdu_data *pdu_data, uint16_t handle,
 				 struct net_buf *buf)
@@ -8957,6 +9054,12 @@ static void encode_control(struct node_rx_pdu *node_rx,
 		le_subrate_change_event(pdu_data, handle, buf);
 		break;
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	case NODE_RX_TYPE_READ_ALL_REMOTE_FEAT_COMPLETE:
+		le_read_all_remote_feat_complete(pdu_data, handle, buf);
+		break;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 
 #if defined(CONFIG_BT_CTLR_LE_ENC)
 	case NODE_RX_TYPE_ENC_REFRESH:
@@ -9489,6 +9592,10 @@ uint8_t hci_get_class(struct node_rx_pdu *node_rx)
 #if defined(CONFIG_BT_CTLR_SUBRATING)
 		case NODE_RX_TYPE_SUBRATE_CHANGE:
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+		case NODE_RX_TYPE_READ_ALL_REMOTE_FEAT_COMPLETE:
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 
 #if defined(CONFIG_BT_CTLR_LE_ENC)
 		case NODE_RX_TYPE_ENC_REFRESH:

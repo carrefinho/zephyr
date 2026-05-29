@@ -264,6 +264,9 @@ uint8_t ll_start_enc_req_send(uint16_t handle, uint8_t err_code,
 			   uint8_t const *const ltk);
 uint8_t ll_req_peer_sca(uint16_t handle);
 uint8_t ll_feature_req_send(uint16_t handle);
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+uint8_t ll_feature_page_req_send(uint16_t handle, uint8_t pages_requested);
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 uint8_t ll_version_ind_send(uint16_t handle);
 uint8_t ll_terminate_ind_send(uint16_t handle, uint8_t reason);
 uint8_t ll_rssi_get(uint16_t handle, uint8_t *const rssi);
