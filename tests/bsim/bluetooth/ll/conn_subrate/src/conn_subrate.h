@@ -15,6 +15,25 @@
 #define CONN_INTERVAL_UNITS 24U  /* 30 ms (1.25 ms units) */
 #define CONN_TIMEOUT_UNITS  200U /* 2 s (10 ms units) */
 
+/* ECV scheduling feasibility spike (central_ecv_sweep): push link 0 below
+ * 1.25 ms via the low-latency reduced-reservation path and sweep the sub-1.25 ms
+ * band while a second link stays full-rate at 30 ms. The on-air interval is
+ * (units + 1) * CONN_LOW_LAT_INT_UNIT_US; this spike branch sets that controller
+ * constant (subsys/.../ll_sw/lll.h) to 125 us so the sweep lands on the exact
+ * ECV grid. ECV_LOWLAT_UNIT_US MUST stay in sync with that lll.h value.
+ */
+#define ECV_LOWLAT_UNIT_US      125U
+#define ECV_US_TO_LL_UNITS(_us) ((uint16_t)((_us) / ECV_LOWLAT_UNIT_US - 1U))
+/* Decreasing interval == increasing scheduler difficulty. 1000/750 are the gated
+ * points (1000 = the proven nRF52 spike point; 750 = the eval's safe ECV floor);
+ * 875/625/500 are informational probes (625 = the eval's stretch goal, 500 =
+ * below SDC's shipping floor). */
+#define ECV_SWEEP_US_LIST       { 1000U, 875U, 750U, 625U, 500U }
+#define ECV_COUNT_WINDOW_MS     2000  /* per-interval cadence measurement window */
+#define ECV_SETTLE_MS           1000  /* let each interval update take effect on air */
+#define ECV_GATE_PCT_1000       80U   /* sanity gate: 1 ms held 93% on nrf52_bsim */
+#define ECV_GATE_PCT_750        75U   /* go/no-go gate: the safe ECV floor under load */
+
 /* Peripheral-initiated Connection Subrate Request parameters (5.1.20). A range
  * is requested so the central can grant the largest factor it accepts.
  */

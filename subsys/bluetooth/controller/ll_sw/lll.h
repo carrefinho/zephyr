@@ -21,7 +21,17 @@
 #define CONN_INT_UNIT_US         1250U
 #define ISO_INT_UNIT_US          CONN_INT_UNIT_US
 #define PERIODIC_INT_UNIT_US     CONN_INT_UNIT_US
-#define CONN_LOW_LAT_INT_UNIT_US 500U
+/* ECV FEASIBILITY SPIKE (branch ecv-feasibility-spike only): the sub-7.5 ms
+ * low-latency on-air interval is (units + 1) * CONN_LOW_LAT_INT_UNIT_US, with
+ * the reduced (overhead-only) slot reservation + is_abort_cb anchor-sync path.
+ * Set to 125 us (was 500 us) so the conn_subrate central_ecv_sweep test can
+ * drive link 0 onto the exact ECV grid {1000,875,750,625,500} us and measure
+ * whether LL_SW holds the anchor under a concurrent 30 ms link on nRF54L. This
+ * only affects sub-7.5 ms low-latency links (the >=7.5 ms / RCV-1250-grid paths
+ * are untouched), so subrating / SCI / EFS scenarios are unaffected. Do NOT
+ * merge to a feature branch; the real ECV interval grid is the 125 us
+ * requantization in ull_conn.c, not this constant. */
+#define CONN_LOW_LAT_INT_UNIT_US 125U
 
 #define ISO_INTERVAL_TO_US(interval) ((interval) * ISO_INT_UNIT_US)
 

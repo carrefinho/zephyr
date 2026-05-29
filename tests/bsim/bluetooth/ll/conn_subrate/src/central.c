@@ -87,6 +87,14 @@ static volatile int m_created;
 static volatile int m_nconns;
 static volatile uint16_t m_subrated_handle = 0xFFFFU;
 static volatile bool multi_mode;
+#if defined(CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT)
+/* Set by the disconnected callback when a link drops for any reason other than
+ * our own teardown - i.e. a link lost anchor (supervision timeout) under
+ * contention. The ECV scheduling spike (central_ecv_sweep) asserts this stays
+ * false across the sub-1.25 ms sweep.
+ */
+static volatile bool m_unexpected_disc;
+#endif
 
 static void device_found_multi(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 			       struct net_buf_simple *ad)
@@ -183,6 +191,16 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	printk("Central disconnected (reason 0x%02x)\n", reason);
+
+#if defined(CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT)
+	/* In the multi-link spike, an unsolicited disconnect (anything but our own
+	 * teardown) means a link lost sync under contention - flag it.
+	 */
+	if (multi_mode && reason != BT_HCI_ERR_REMOTE_USER_TERM_CONN &&
+	    reason != BT_HCI_ERR_LOCALHOST_TERM_CONN) {
+		m_unexpected_disc = true;
+	}
+#endif
 
 	if (default_conn) {
 		bt_conn_unref(default_conn);
@@ -799,6 +817,129 @@ static void test_central_main_multi(void)
 	}
 	PASS("Multi: subrated link held cadence (%u events) alongside full-rate link "
 	     "(%u events)\n", wakes_sub, wakes_plain);
+	bs_trace_silent_exit(0);
+}
+
+/* ECV scheduling feasibility spike -- the go/no-go for the sub-1.25 ms tier.
+ * Holds the same two-link split topology as central_multi, but sweeps link 0
+ * down the sub-1.25 ms band (1000 -> 500 us) via the low-latency reduced-
+ * reservation path (CONN_LOW_LAT_INT_UNIT_US == 125 us on this spike branch, so
+ * (units + 1) * 125 lands on the exact ECV grid) while link 1 stays full-rate at
+ * 30 ms. The question: can the LL_SW scheduler hold a sub-1.25 ms anchor under a
+ * concurrent full-rate link on nRF54L (single timer), and down to what interval?
+ * This exercises the reduced-reservation + is_abort_cb path with the low-lat
+ * 52 us tIFS (the FSU-equivalent regime). Per-interval cadence is printed; the
+ * hard gates are the 1 ms sanity point and the 750 us safe ECV floor.
+ */
+static void test_central_main_ecv_sweep(void)
+{
+	static const uint16_t sweep_us[] = ECV_SWEEP_US_LIST;
+	bool held_1000 = false, held_750 = false;
+	uint16_t h0, h1;
+	int i, err;
+
+	multi_mode = true;
+	if (central_init_multi()) {
+		return;
+	}
+
+	printk("ECV-SPIKE cfg: LOW_LATENCY=%d PARAM_ANY=%d IFS_LOW_LAT_US=%d "
+	       "ASSERT_OVERHEAD=%d (grid unit %u us)\n",
+	       IS_ENABLED(CONFIG_BT_CTLR_CONN_INTERVAL_LOW_LATENCY),
+	       IS_ENABLED(CONFIG_BT_CONN_PARAM_ANY),
+	       CONFIG_BT_CTLR_EVENT_IFS_LOW_LAT_US,
+	       IS_ENABLED(CONFIG_BT_CTLR_ASSERT_OVERHEAD_START), ECV_LOWLAT_UNIT_US);
+
+	/* Connect to both peers at the normal 30 ms interval. */
+	for (i = 0; i < 2; i++) {
+		err = bt_le_scan_start(BT_LE_SCAN_ACTIVE, device_found_multi);
+		if (err) {
+			FAIL("ECV: scan start for link %d failed (err %d)\n", i, err);
+			return;
+		}
+		SUBRATE_WAIT(m_nconns > i);
+	}
+	if (bt_hci_get_conn_handle(m_conn[0], &h0) ||
+	    bt_hci_get_conn_handle(m_conn[1], &h1)) {
+		FAIL("ECV: could not read conn handles\n");
+		return;
+	}
+
+	k_sleep(K_MSEC(ECV_SETTLE_MS));
+	if (m_unexpected_disc) {
+		FAIL("ECV: a link dropped during the initial 30 ms settle\n");
+		return;
+	}
+
+	for (i = 0; i < (int)ARRAY_SIZE(sweep_us); i++) {
+		uint16_t us = sweep_us[i];
+		uint16_t units = ECV_US_TO_LL_UNITS(us);
+		struct bt_le_conn_param *fast =
+			BT_LE_CONN_PARAM(units, units, 0U, CONN_TIMEOUT_UNITS);
+		uint32_t b0, b1, w0, w1, exp0, pct;
+
+		err = bt_conn_le_param_update(m_conn[0], fast);
+		if (err) {
+			printk("ECV-SPIKE %4u us: param update (units=%u) REJECTED "
+			       "err %d -- stopping sweep\n", us, units, err);
+			break;
+		}
+		k_sleep(K_MSEC(ECV_SETTLE_MS));
+		if (m_unexpected_disc) {
+			printk("ECV-SPIKE %4u us: link DROPPED applying interval "
+			       "(anchor lost on the update) -- stopping sweep\n", us);
+			break;
+		}
+
+		b0 = ll_test_conn_event_count[h0];
+		b1 = ll_test_conn_event_count[h1];
+		k_sleep(K_MSEC(ECV_COUNT_WINDOW_MS));
+		if (m_unexpected_disc) {
+			printk("ECV-SPIKE %4u us: link DROPPED under load (supervision "
+			       "timeout) -- stopping sweep\n", us);
+			break;
+		}
+		w0 = ll_test_conn_event_count[h0] - b0;
+		w1 = ll_test_conn_event_count[h1] - b1;
+		/* nominal events = measurement window (us) / interval (us) */
+		exp0 = ((uint32_t)ECV_COUNT_WINDOW_MS * 1000U) / us;
+		pct = exp0 ? (w0 * 100U) / exp0 : 0U;
+
+		printk("ECV-SPIKE %4u us: lowlat link %u events (nominal ~%u, %u%%), "
+		       "30 ms link %u events in %u ms\n",
+		       us, w0, exp0, pct, w1, ECV_COUNT_WINDOW_MS);
+
+		if (us == 1000U && pct >= ECV_GATE_PCT_1000) {
+			held_1000 = true;
+		}
+		if (us == 750U && pct >= ECV_GATE_PCT_750) {
+			held_750 = true;
+		}
+	}
+
+	if (m_unexpected_disc) {
+		FAIL("ECV-SPIKE: a link dropped during the sweep -- LL_SW lost the "
+		     "sub-1.25 ms anchor under split load\n");
+		return;
+	}
+	if (!held_1000) {
+		FAIL("ECV-SPIKE: 1 ms link did not hold >=%u%% cadence (sanity) -- "
+		     "worse than the nRF52 reference spike\n", ECV_GATE_PCT_1000);
+		return;
+	}
+	if (!held_750) {
+		FAIL("ECV-SPIKE: 750 us link did not hold >=%u%% cadence under the "
+		     "30 ms-coex split load -- the ECV safe-floor go/no-go FAILED on "
+		     "this target\n", ECV_GATE_PCT_750);
+		return;
+	}
+
+	for (i = 0; i < 2; i++) {
+		(void)bt_conn_disconnect(m_conn[i], BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	}
+	PASS("ECV-SPIKE: 750 us anchor held >=%u%% under 30 ms-coex split load "
+	     "(1 ms + 750 us gates passed); see per-interval cadence for the "
+	     "875/625/500 us probe points\n", ECV_GATE_PCT_750);
 	bs_trace_silent_exit(0);
 }
 #endif /* CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT */
@@ -1756,6 +1897,16 @@ static const struct bst_test_instance test_central[] = {
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_multi,
+	},
+	{
+		.test_id = "central_ecv_sweep",
+		.test_descr = "Central (ECV spike): sweep one link down the sub-1.25 ms "
+			      "band (1000->500 us, low-latency reduced-reservation path) "
+			      "alongside a 30 ms link; report per-interval cadence and "
+			      "gate on the 1 ms + 750 us anchors holding under contention.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_ecv_sweep,
 	},
 #endif
 	{

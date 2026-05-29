@@ -1,0 +1,173 @@
+# CI for the ECV (Extended Connection Interval Values, sub-1.25 ms SCI tier)
+# SCHEDULING FEASIBILITY SPIKE on a fork.
+#
+# This is step 1 of the ECV evaluation's build order: prove the go/no-go BEFORE
+# writing any ECV grid / FSU code. It does NOT exercise the ECV protocol (no new
+# PDUs/procedure - ECV reuses the RCV conn_rate path). Instead it uses the proven
+# BT_CTLR_CONN_INTERVAL_LOW_LATENCY reduced-reservation path as a stand-in for the
+# future reduced-CE reservation, with CONN_LOW_LAT_INT_UNIT_US set to 125 us (on
+# this spike branch) so the conn_subrate central_ecv_sweep test can drive one link
+# onto the exact ECV grid {1000,875,750,625,500} us alongside a concurrent 30 ms
+# link (the ZMK split topology) and measure whether LL_SW holds the anchor.
+#
+# The nRF54L15 job is the one that matters: single-timer (GRTC), the 275 us
+# EVENT_OVERHEAD_START_US branch + the 80 us ISR-latency dead-zone that the eval
+# flagged as the binding constraint. nRF52 runs as a dual-timer comparison point.
+#
+# Reuses the public Zephyr CI container (bundles GCC, the Zephyr SDK and a
+# pre-built BabbleSim at /opt/bsim) on GitHub-hosted runners.
+name: ECV Feasibility Spike
+
+on:
+  push:
+    branches:
+      - "ecv-feasibility-spike"
+  workflow_dispatch:
+
+jobs:
+  ecv-spike-nrf54l:
+    runs-on: ubuntu-22.04
+    container:
+      image: docker.io/zephyrprojectrtos/ci:v0.27.4
+      options: "--entrypoint /bin/bash"
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+      BSIM_OUT_PATH: /opt/bsim/
+      BSIM_COMPONENTS_PATH: /opt/bsim/components
+      BOARD: nrf54l15bsim/nrf54l15/cpuapp
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve west topdir
+        run: echo "WEST_TOPDIR=$(realpath "$GITHUB_WORKSPACE/..")" >> "$GITHUB_ENV"
+
+      - name: Cache west modules
+        uses: actions/cache@v5
+        env:
+          cache-name: cache-zephyr-modules
+        with:
+          path: |
+            ${{ env.WEST_TOPDIR }}/modules
+            ${{ env.WEST_TOPDIR }}/tools
+            ${{ env.WEST_TOPDIR }}/bootloader
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('west.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+        timeout-minutes: 5
+        continue-on-error: true
+
+      - name: West init + update
+        run: |
+          west init -l . || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update 1> west.update.log 2>&1
+          west forall -c 'git reset --hard HEAD'
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
+
+      - name: Compile conn_subrate (ECV spike overlay, nRF54L)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+          conf_overlay="${ZEPHYR_BASE}/tests/bsim/bluetooth/ll/conn_subrate/overlay-ecv-spike.conf" \
+            app=tests/bsim/bluetooth/ll/conn_subrate compile
+          wait_for_background_jobs
+
+      - name: Run the ECV sub-1.25 ms sweep (nRF54L bsim)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=180
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_spike.sh
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecv-spike-nrf54l-logs
+          path: |
+            *.log
+            west.update.log
+          if-no-files-found: ignore
+
+  ecv-spike-nrf52:
+    runs-on: ubuntu-22.04
+    container:
+      image: docker.io/zephyrprojectrtos/ci:v0.27.4
+      options: "--entrypoint /bin/bash"
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+      BSIM_OUT_PATH: /opt/bsim/
+      BSIM_COMPONENTS_PATH: /opt/bsim/components
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve west topdir
+        run: echo "WEST_TOPDIR=$(realpath "$GITHUB_WORKSPACE/..")" >> "$GITHUB_ENV"
+
+      - name: Cache west modules
+        uses: actions/cache@v5
+        env:
+          cache-name: cache-zephyr-modules
+        with:
+          path: |
+            ${{ env.WEST_TOPDIR }}/modules
+            ${{ env.WEST_TOPDIR }}/tools
+            ${{ env.WEST_TOPDIR }}/bootloader
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('west.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+        timeout-minutes: 5
+        continue-on-error: true
+
+      - name: West init + update
+        run: |
+          west init -l . || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update 1> west.update.log 2>&1
+          west forall -c 'git reset --hard HEAD'
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
+
+      - name: Compile conn_subrate (ECV spike overlay, nRF52)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+          conf_overlay="${ZEPHYR_BASE}/tests/bsim/bluetooth/ll/conn_subrate/overlay-ecv-spike.conf" \
+            app=tests/bsim/bluetooth/ll/conn_subrate compile
+          wait_for_background_jobs
+
+      - name: Run the ECV sub-1.25 ms sweep (nRF52 bsim)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=180
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_spike.sh
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecv-spike-nrf52-logs
+          path: |
+            *.log
+            west.update.log
+          if-no-files-found: ignore
