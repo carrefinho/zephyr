@@ -3319,7 +3319,9 @@ void notify_subrate_change(struct bt_conn *conn,
 void bt_conn_notify_conn_rate_change(struct bt_conn *conn, uint8_t status,
 				     const struct bt_conn_le_conn_rate_changed *params)
 {
-	BT_CONN_CB_DYNAMIC_FOREACH(callback) {
+	struct bt_conn_cb *callback;
+
+	SYS_SLIST_FOR_EACH_CONTAINER(&conn_cbs, callback, _node) {
 		if (callback->conn_rate_changed != NULL) {
 			callback->conn_rate_changed(conn, status, params);
 		}
@@ -3541,7 +3543,7 @@ int bt_conn_le_conn_rate_set_defaults(const struct bt_conn_le_conn_rate_param *p
 		return -EINVAL;
 	}
 
-	buf = bt_hci_cmd_alloc(K_FOREVER);
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_DEFAULT_RATE_PARAMETERS, sizeof(*cp));
 	if (buf == NULL) {
 		return -ENOBUFS;
 	}
@@ -3567,7 +3569,7 @@ int bt_conn_le_conn_rate_request(struct bt_conn *conn,
 	struct bt_hci_op_le_connection_rate_request *cp;
 	struct net_buf *buf;
 
-	if (!bt_conn_is_le(conn)) {
+	if (conn->type != BT_CONN_TYPE_LE) {
 		LOG_DBG("Invalid connection type: %u for %p", conn->type, conn);
 		return -EINVAL;
 	}
@@ -3576,7 +3578,7 @@ int bt_conn_le_conn_rate_request(struct bt_conn *conn,
 		return -EINVAL;
 	}
 
-	buf = bt_hci_cmd_alloc(K_FOREVER);
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_CONNECTION_RATE_REQUEST, sizeof(*cp));
 	if (buf == NULL) {
 		return -ENOBUFS;
 	}
