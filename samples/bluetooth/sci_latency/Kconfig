@@ -21,4 +21,30 @@ config SCI_LATENCY_PLAIN_SUBRATE
 	  factor*interval result here vs a high floor on the 1.25 ms SCI build
 	  pinpoints whether the latency is the SCI interaction or subrating itself.
 
+config SCI_LATENCY_PLAIN_INTERVAL_UNITS
+	int "Plain-subrate connection interval (1.25 ms units)"
+	depends on SCI_LATENCY_PLAIN_SUBRATE
+	default 6
+	help
+	  Connection interval for the plain-subrate control, in 1.25 ms units.
+	  6 = 7.5 ms (BT_HCI_LE_INTERVAL_MIN). 24 = 30 ms (matches the conn_subrate
+	  bsim test's CONN_INTERVAL_UNITS, for an apples-to-apples HW-vs-bsim run).
+
+config SCI_LATENCY_IDLE_GAP_MS
+	int "Idle inter-read gap (ms)"
+	depends on SCI_LATENCY_CENTRAL
+	default 200
+	help
+	  Gap between isolated ("idle") reads. Must exceed the subrate skip period so
+	  the peer re-sleeps between reads. bsim uses 400 ms.
+
+config SCI_LATENCY_BURST_GAP_MS
+	int "Burst inter-read gap (ms)"
+	depends on SCI_LATENCY_CENTRAL
+	default 2
+	help
+	  Gap between back-to-back ("burst") reads. Must stay inside the continuation
+	  (awake) window = (factor-1) * interval, so the gap has to scale with the
+	  interval: ~2 ms at 1.25 ms, 50 ms at 30 ms (bsim's value).
+
 source "Kconfig.zephyr"

@@ -49,10 +49,10 @@ static struct bt_conn *default_conn;
 
 static const uint16_t sweep_factors[] = { 1U, 2U, 4U, 8U };
 #define READS_PER_FACTOR   10
-/* "idle" gap: > factor x 1.25 ms so the peer re-sleeps between isolated reads. */
-#define IDLE_GAP_MS        200
-/* "burst" gap: small, so reads land inside the continuation (awake) window. */
-#define BURST_GAP_MS       2
+/* "idle" gap: > factor x interval so the peer re-sleeps between isolated reads. */
+#define IDLE_GAP_MS        CONFIG_SCI_LATENCY_IDLE_GAP_MS
+/* "burst" gap: < continuation window, so reads land inside the awake window. */
+#define BURST_GAP_MS       CONFIG_SCI_LATENCY_BURST_GAP_MS
 
 static K_SEM_DEFINE(sem_connected, 0, 1);
 static K_SEM_DEFINE(sem_feat, 0, 1);
@@ -64,8 +64,8 @@ static K_SEM_DEFINE(sem_param, 0, 1);
 /* 7.5 ms in 1.25 ms units (BT_HCI_LE_INTERVAL_MIN -- the shortest standard,
  * non-SCI connection interval; the control for "is it SCI or subrating?").
  */
-#define PLAIN_INTERVAL_125MS    6U
-#define BASE_INTERVAL_US        7500U
+#define PLAIN_INTERVAL_125MS    ((uint16_t)CONFIG_SCI_LATENCY_PLAIN_INTERVAL_UNITS)
+#define BASE_INTERVAL_US        (CONFIG_SCI_LATENCY_PLAIN_INTERVAL_UNITS * 1250U)
 #else
 #define BASE_INTERVAL_US        1250U
 #endif
@@ -342,7 +342,8 @@ int main(void)
 		LOG_ERR("param update to 7.5 ms not applied");
 		return 0;
 	}
-	LOG_INF("Link now at 7.5 ms (PLAIN subrate control). Sweeping subrate factor.");
+	LOG_INF("Link now at %u us (PLAIN subrate control). Sweeping subrate factor.",
+		BASE_INTERVAL_US);
 #else
 	err = bt_conn_le_conn_rate_request(default_conn, &rate);
 	if (err) {
