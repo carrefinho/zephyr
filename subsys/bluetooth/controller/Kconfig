@@ -1187,6 +1187,18 @@ config BT_CTLR_EXTENDED_FEAT_SET
 	  Enable support for Bluetooth 6.0 LL Extended Feature Set
 	  in the Controller.
 
+config BT_CTLR_LOCAL_FEATURE_PAGE
+	int "Highest stored LL feature page"
+	depends on BT_CTLR_EXTENDED_FEAT_SET
+	range 1 10
+	default 1
+	help
+	  Highest LL feature page (1..10, where page 1 carries feature bits 64+
+	  such as Frame Space Update and Shorter Connection Intervals) that this
+	  controller stores per connection for the peer's extended features.
+	  Default 1 is enough for the current >=64 feature bits; raise only if a
+	  higher page is needed.
+
 config BT_CTLR_SHORTER_CONNECTION_INTERVALS
 	bool "Shorter Connection Intervals"
 	depends on BT_CTLR_SHORTER_CONNECTION_INTERVALS_SUPPORT
