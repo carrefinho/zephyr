@@ -435,6 +435,49 @@ void ll_subrate_defaults_set(uint16_t subrate_min, uint16_t subrate_max, uint16_
 }
 #endif /* CONFIG_BT_CTLR_SUBRATING */
 
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+static __maybe_unused struct {
+	uint16_t interval_min;
+	uint16_t interval_max;
+	uint16_t subrate_min;
+	uint16_t subrate_max;
+	uint16_t max_latency;
+	uint16_t continuation_number;
+	uint16_t supervision_timeout;
+} conn_rate_defaults;
+
+uint8_t ll_conn_rate_defaults_set(uint16_t interval_min_125us, uint16_t interval_max_125us,
+				  uint16_t subrate_min, uint16_t subrate_max, uint16_t max_latency,
+				  uint16_t continuation_number, uint16_t supervision_timeout)
+{
+	/* Validate the RCV grid at store time so a stored default cannot later seed
+	 * an ECV Connection Rate Request (one of the three enforcement sites, with
+	 * the PDU codec and ll_conn_rate_req_send). Intervals are 125 us units.
+	 */
+	if ((interval_min_125us % 10U) != 0U || (interval_max_125us % 10U) != 0U ||
+	    (interval_min_125us < 0x000AU) || (interval_max_125us > 0x7D00U) ||
+	    (interval_max_125us < interval_min_125us)) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	if ((subrate_min < 0x0001U) || (subrate_max > 0x01F4U) || (subrate_max < subrate_min) ||
+	    (max_latency > 0x01F3U) || (continuation_number > 0x01F3U) ||
+	    (supervision_timeout < 0x000AU) || (supervision_timeout > 0x0C80U)) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	conn_rate_defaults.interval_min = interval_min_125us / 10U;
+	conn_rate_defaults.interval_max = interval_max_125us / 10U;
+	conn_rate_defaults.subrate_min = subrate_min;
+	conn_rate_defaults.subrate_max = subrate_max;
+	conn_rate_defaults.max_latency = max_latency;
+	conn_rate_defaults.continuation_number = continuation_number;
+	conn_rate_defaults.supervision_timeout = supervision_timeout;
+
+	return BT_HCI_ERR_SUCCESS;
+}
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
 void ull_llcp_init(struct ll_conn *conn)
 {
 	/* Reset local request fsm */

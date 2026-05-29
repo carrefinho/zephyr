@@ -394,6 +394,59 @@ uint8_t ll_subrate_req(uint16_t handle, uint16_t subrate_min, uint16_t subrate_m
 }
 #endif /* CONFIG_BT_CTLR_SUBRATING */
 
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+uint8_t ll_conn_rate_req_send(uint16_t handle, uint16_t interval_min_125us,
+			      uint16_t interval_max_125us, uint16_t subrate_min,
+			      uint16_t subrate_max, uint16_t max_latency,
+			      uint16_t continuation_number, uint16_t supervision_timeout)
+{
+	struct ll_conn *conn;
+	uint16_t interval_min;
+	uint16_t interval_max;
+
+	conn = ll_connected_get(handle);
+	if (!conn) {
+		return BT_HCI_ERR_UNKNOWN_CONN_ID;
+	}
+
+	/* RCV grid (the third enforcement site, alongside the PDU codec and the
+	 * defaults store): the connection interval is in 125 us units and must be
+	 * a multiple of 10 (1.25 ms) in [1250 us, 4 s]; reject ECV / sub-floor and
+	 * convert to the internal 1.25 ms grid so the controller never emits ECV.
+	 */
+	if ((interval_min_125us % 10U) != 0U || (interval_max_125us % 10U) != 0U ||
+	    (interval_min_125us < 0x000AU) || (interval_max_125us > 0x7D00U) ||
+	    (interval_max_125us < interval_min_125us)) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+	interval_min = interval_min_125us / 10U;
+	interval_max = interval_max_125us / 10U;
+
+	/* Subrate parameter range checks, Core Spec Vol 4, Part E, Section 7.8 */
+	if ((subrate_min < 0x0001U) || (subrate_min > 0x01F4U) ||
+	    (subrate_max < 0x0001U) || (subrate_max > 0x01F4U) ||
+	    (subrate_max < subrate_min) || (max_latency > 0x01F3U) ||
+	    (continuation_number > 0x01F3U) || (continuation_number >= subrate_max) ||
+	    (supervision_timeout < 0x000AU) || (supervision_timeout > 0x0C80U) ||
+	    ((uint32_t)subrate_max * (max_latency + 1U) > 500U)) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* Supervision timeout must exceed 2 x newInterval x Subrate_Max x
+	 * (Max_Latency + 1), scaled by 4 (interval 1.25 ms, timeout 10 ms).
+	 * Checked against the requested NEW interval, not the current one.
+	 */
+	if (((uint32_t)interval_max * subrate_max * (max_latency + 1U)) >=
+	    ((uint32_t)supervision_timeout * 4U)) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	return ull_cp_conn_rate_req(conn, interval_min, interval_max, subrate_min,
+				    subrate_max, max_latency, continuation_number,
+				    supervision_timeout);
+}
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
 uint8_t ll_chm_get(uint16_t handle, uint8_t *chm)
 {
 	struct ll_conn *conn;
