@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+
+mainmenu "SCI latency tester"
+
+config SCI_LATENCY_CENTRAL
+	bool "Run as the SCI latency Central (else Peripheral)"
+	help
+	  When set, this build is the Central: it connects, drives the link to a
+	  1.25 ms connection interval via the LE Connection Rate Update procedure,
+	  sweeps the subrate factor and logs round-trip GATT latency over the VCOM
+	  UART. When unset, this build is the Peripheral that advertises and accepts.
+
+source "Kconfig.zephyr"

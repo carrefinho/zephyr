@@ -165,3 +165,58 @@ jobs:
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci.sh
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_subrate.sh
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_coex.sh
+
+  # Build-only check of the hardware-in-the-loop sci_latency sample for the
+  # physical nRF54L15 DK (both roles), so it does not bit-rot against controller
+  # API changes. The sample is driven on real DKs over VCOM UART; CI cannot run it.
+  sci-sample-build:
+    runs-on: ubuntu-22.04
+    container:
+      image: docker.io/zephyrprojectrtos/ci:v0.27.4
+      options: "--entrypoint /bin/bash"
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve west topdir
+        run: echo "WEST_TOPDIR=$(realpath "$GITHUB_WORKSPACE/..")" >> "$GITHUB_ENV"
+
+      - name: Cache west modules
+        uses: actions/cache@v5
+        env:
+          cache-name: cache-zephyr-modules
+        with:
+          path: |
+            ${{ env.WEST_TOPDIR }}/modules
+            ${{ env.WEST_TOPDIR }}/tools
+            ${{ env.WEST_TOPDIR }}/bootloader
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('west.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+        timeout-minutes: 5
+        continue-on-error: true
+
+      - name: West init + update
+        run: |
+          west init -l . || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update 1> west.update.log 2>&1
+          west forall -c 'git reset --hard HEAD'
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
+
+      - name: Build sci_latency sample (nRF54L15 DK, both roles, build-only)
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          ./scripts/twister -p nrf54l15dk/nrf54l15/cpuapp \
+            -T samples/bluetooth/sci_latency --build-only --inline-logs -v -N \
+            --no-detailed-test-id
