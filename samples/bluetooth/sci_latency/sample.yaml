@@ -1,0 +1,26 @@
+sample:
+  name: SCI latency tester (nRF54L15 DK, hardware-in-the-loop)
+  description: >
+    Two-DK Shorter Connection Intervals latency tester. The central drives a
+    1.25 ms link via the Connection Rate Update procedure and sweeps the subrate
+    factor, logging round-trip GATT latency over the VCOM UART.
+common:
+  tags: bluetooth sci subrating
+  harness: bluetooth
+tests:
+  sample.bluetooth.sci_latency.central:
+    build_only: true
+    extra_args: EXTRA_CONF_FILE=central.conf
+    platform_allow:
+      - nrf54l15dk/nrf54l15/cpuapp
+      - nrf52_bsim
+    integration_platforms:
+      - nrf54l15dk/nrf54l15/cpuapp
+  sample.bluetooth.sci_latency.peripheral:
+    build_only: true
+    extra_args: EXTRA_CONF_FILE=peripheral.conf
+    platform_allow:
+      - nrf54l15dk/nrf54l15/cpuapp
+      - nrf52_bsim
+    integration_platforms:
+      - nrf54l15dk/nrf54l15/cpuapp
