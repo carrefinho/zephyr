@@ -216,6 +216,78 @@ void llcp_pdu_decode_feature_rsp(struct ll_conn *conn, struct pdu_data *pdu)
 	conn->llcp.fex.valid = 1;
 }
 
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+/*
+ * Feature Page Exchange Procedure Helpers (LL Extended Feature Set, Core 6.0).
+ * These carry feature pages >= 1 as raw 24-octet slices and MUST NOT be routed
+ * through feature_filter()/features_used()/sys_le64() which are page-0 only.
+ */
+void llcp_pdu_encode_feature_ext_req(struct ll_conn *conn, struct proc_ctx *ctx,
+				     struct pdu_data *pdu)
+{
+	struct pdu_data_llctrl_feature_ext_req *p;
+
+	pdu->ll_id = PDU_DATA_LLID_CTRL;
+	pdu->len = PDU_DATA_LLCTRL_LEN(feature_ext_req);
+	pdu->llctrl.opcode = PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_REQ;
+
+	p = &pdu->llctrl.feature_ext_req;
+	p->max_page = ll_feat_local_max_page();
+	p->page_number = ctx->data.fpx.page;
+	ll_feat_get_page(ctx->data.fpx.page, p->features);
+}
+
+void llcp_pdu_encode_feature_ext_rsp(struct ll_conn *conn, struct proc_ctx *ctx,
+				     struct pdu_data *pdu)
+{
+	struct pdu_data_llctrl_feature_ext_rsp *p;
+
+	pdu->ll_id = PDU_DATA_LLID_CTRL;
+	pdu->len = PDU_DATA_LLCTRL_LEN(feature_ext_rsp);
+	pdu->llctrl.opcode = PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_RSP;
+
+	p = &pdu->llctrl.feature_ext_rsp;
+	p->max_page = ll_feat_local_max_page();
+	p->page_number = ctx->data.fpx.page;
+	ll_feat_get_page(ctx->data.fpx.page, p->features);
+}
+
+void llcp_pdu_decode_feature_ext_req(struct ll_conn *conn, struct proc_ctx *ctx,
+				     struct pdu_data *pdu)
+{
+	struct pdu_data_llctrl_feature_ext_req *p = &pdu->llctrl.feature_ext_req;
+
+	conn->llcp.fex.max_page_peer = p->max_page;
+	ctx->data.fpx.peer_max_page = p->max_page;
+
+	/* Store the requested page number so the responder echoes it */
+	ctx->data.fpx.page = p->page_number;
+
+	if (p->page_number == 1U) {
+		memcpy(conn->llcp.fex.features_peer_ext, p->features,
+		       sizeof(conn->llcp.fex.features_peer_ext));
+	}
+
+	conn->llcp.fex.ext_valid = 1U;
+}
+
+void llcp_pdu_decode_feature_ext_rsp(struct ll_conn *conn, struct proc_ctx *ctx,
+				     struct pdu_data *pdu)
+{
+	struct pdu_data_llctrl_feature_ext_rsp *p = &pdu->llctrl.feature_ext_rsp;
+
+	conn->llcp.fex.max_page_peer = p->max_page;
+	ctx->data.fpx.peer_max_page = p->max_page;
+
+	if (p->page_number == 1U) {
+		memcpy(conn->llcp.fex.features_peer_ext, p->features,
+		       sizeof(conn->llcp.fex.features_peer_ext));
+	}
+
+	conn->llcp.fex.ext_valid = 1U;
+}
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
+
 #if defined(CONFIG_BT_CTLR_MIN_USED_CHAN)
 /*
  * Minimum used channels Procedure Helpers

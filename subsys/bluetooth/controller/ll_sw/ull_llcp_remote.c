@@ -97,6 +97,9 @@ static bool proc_with_instant(struct proc_ctx *ctx)
 	case PROC_SCA_UPDATE:
 	case PROC_PERIODIC_SYNC:
 	case PROC_SUBRATE_UPDATE:
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	case PROC_FEATURE_PAGE_EXCHANGE:
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 		return 0U;
 	case PROC_PHY_UPDATE:
 	case PROC_CONN_UPDATE:
@@ -257,6 +260,11 @@ void llcp_rr_rx(struct ll_conn *conn, struct proc_ctx *ctx, memq_link_t *link,
 	case PROC_FEATURE_EXCHANGE:
 		llcp_rp_comm_rx(conn, ctx, rx);
 		break;
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	case PROC_FEATURE_PAGE_EXCHANGE:
+		llcp_rp_comm_rx(conn, ctx, rx);
+		break;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 #if defined(CONFIG_BT_CTLR_MIN_USED_CHAN)
 	case PROC_MIN_USED_CHANS:
 		llcp_rp_comm_rx(conn, ctx, rx);
@@ -407,6 +415,11 @@ static void rr_act_run(struct ll_conn *conn)
 	case PROC_FEATURE_EXCHANGE:
 		llcp_rp_comm_run(conn, ctx, NULL);
 		break;
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	case PROC_FEATURE_PAGE_EXCHANGE:
+		llcp_rp_comm_run(conn, ctx, NULL);
+		break;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 #if defined(CONFIG_BT_CTLR_MIN_USED_CHAN)
 	case PROC_MIN_USED_CHANS:
 		llcp_rp_comm_run(conn, ctx, NULL);
@@ -872,6 +885,10 @@ static const struct proc_role new_proc_lut[] = {
 	[PDU_DATA_LLCTRL_TYPE_UNKNOWN_RSP] = { PROC_UNKNOWN, ACCEPT_ROLE_NONE },
 	[PDU_DATA_LLCTRL_TYPE_FEATURE_REQ] = { PROC_FEATURE_EXCHANGE, ACCEPT_ROLE_PERIPHERAL },
 	[PDU_DATA_LLCTRL_TYPE_FEATURE_RSP] = { PROC_UNKNOWN, ACCEPT_ROLE_NONE },
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	[PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_REQ] = { PROC_FEATURE_PAGE_EXCHANGE, ACCEPT_ROLE_BOTH },
+	[PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_RSP] = { PROC_UNKNOWN, ACCEPT_ROLE_NONE },
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 #if defined(CONFIG_BT_CTLR_LE_ENC) && defined(CONFIG_BT_PERIPHERAL)
 	[PDU_DATA_LLCTRL_TYPE_PAUSE_ENC_REQ] = { PROC_ENCRYPTION_PAUSE, ACCEPT_ROLE_PERIPHERAL },
 #endif /* CONFIG_BT_CTLR_LE_ENC && CONFIG_BT_PERIPHERAL */
