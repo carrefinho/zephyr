@@ -388,6 +388,27 @@ static void lp_comm_ntf_sca(struct node_rx_pdu *ntf, struct proc_ctx *ctx, struc
 }
 #endif /* CONFIG_BT_CTLR_SCA_UPDATE */
 
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+static void lp_comm_ntf_feature_page_exchange(struct ll_conn *conn, struct node_rx_pdu *ntf,
+					      struct pdu_data *pdu)
+{
+	struct node_rx_read_all_remote_feat *p = (struct node_rx_read_all_remote_feat *)pdu;
+
+	/* Dedicated node_rx type: hci.c renders this as the
+	 * LE Read All Remote Features Complete meta-event and expands the
+	 * stored pages into the 248-octet host feature field.
+	 */
+	ntf->hdr.type = NODE_RX_TYPE_READ_ALL_REMOTE_FEAT_COMPLETE;
+
+	p->status = BT_HCI_ERR_SUCCESS;
+	p->max_remote_page = conn->llcp.fex.max_page_peer;
+	p->max_valid_page = conn->llcp.fex.max_page_peer;
+	sys_put_le64(conn->llcp.fex.features_peer, p->features_page_0);
+	memcpy(p->features_page_1, conn->llcp.fex.features_peer_ext,
+	       sizeof(p->features_page_1));
+}
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
+
 static void lp_comm_ntf(struct ll_conn *conn, struct proc_ctx *ctx)
 {
 	uint8_t piggy_back = 1U;
@@ -429,6 +450,11 @@ static void lp_comm_ntf(struct ll_conn *conn, struct proc_ctx *ctx)
 		lp_comm_ntf_sca(ntf, ctx, pdu);
 		break;
 #endif /* CONFIG_BT_CTLR_SCA_UPDATE */
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	case PROC_FEATURE_PAGE_EXCHANGE:
+		lp_comm_ntf_feature_page_exchange(conn, ntf, pdu);
+		break;
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 	default:
 		LL_ASSERT(0);
 		break;
@@ -484,11 +510,16 @@ static void lp_comm_complete(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 #if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
 	case PROC_FEATURE_PAGE_EXCHANGE:
 		/* UNKNOWN_RSP means the peer does not support the Extended
-		 * Feature Set; complete gracefully with page 0 only.
-		 * No per-page host notification is generated (deferred).
+		 * Feature Set; complete gracefully with page 0 only (the page-0
+		 * features stored by the regular Feature Exchange remain valid).
+		 * A host-initiated exchange emits the LE Read All Remote Features
+		 * Complete meta-event on completion (mirrors PROC_FEATURE_EXCHANGE).
 		 */
 		if ((ctx->response_opcode == PDU_DATA_LLCTRL_TYPE_UNKNOWN_RSP ||
 		     ctx->response_opcode == PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_RSP)) {
+			if (ctx->data.fpx.host_initiated) {
+				lp_comm_ntf(conn, ctx);
+			}
 			llcp_lr_complete(conn);
 			ctx->state = LP_COMMON_STATE_IDLE;
 		} else {

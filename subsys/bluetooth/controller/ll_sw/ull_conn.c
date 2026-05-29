@@ -576,6 +576,32 @@ uint8_t ll_feature_req_send(uint16_t handle)
 
 	return 0;
 }
+
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+uint8_t ll_feature_page_req_send(uint16_t handle, uint8_t pages_requested)
+{
+	struct ll_conn *conn;
+	uint8_t err;
+
+	conn = ll_connected_get(handle);
+	if (!conn) {
+		return BT_HCI_ERR_UNKNOWN_CONN_ID;
+	}
+
+	err = ull_cp_feature_page_exchange(conn, pages_requested, 1U);
+	if (err) {
+		return err;
+	}
+
+	if (IS_ENABLED(CONFIG_BT_PERIPHERAL) &&
+	    IS_ENABLED(CONFIG_BT_CTLR_PER_INIT_FEAT_XCHG) &&
+	    conn->lll.role) {
+		ull_periph_latency_cancel(conn, handle);
+	}
+
+	return 0;
+}
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 #endif /* CONFIG_BT_CENTRAL || CONFIG_BT_CTLR_PER_INIT_FEAT_XCHG */
 
 uint8_t ll_version_ind_send(uint16_t handle)

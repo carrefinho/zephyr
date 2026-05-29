@@ -328,6 +328,9 @@ enum node_rx_type {
 #if defined(CONFIG_BT_CTLR_SUBRATING)
 	NODE_RX_TYPE_SUBRATE_CHANGE,
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+	NODE_RX_TYPE_READ_ALL_REMOTE_FEAT_COMPLETE,
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
 	/* Signals retention (ie non-release) of rx node */
 	NODE_RX_TYPE_RETAIN,
 

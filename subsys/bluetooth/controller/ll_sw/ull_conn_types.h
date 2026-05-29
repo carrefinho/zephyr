@@ -347,3 +347,23 @@ struct node_rx_subrate_change {
 	uint16_t supervision_timeout;
 };
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+
+#if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
+/* Compact controller-internal carrier for the LE Read All Remote Features
+ * Complete meta-event. Only the pages we actually exchange are stored here
+ * (page 0 == legacy uint64, page 1 == 24-octet ext slice); hci.c expands this
+ * into the 248-octet host event payload (BT_HCI_LE_FEATURE_PAGE_MAX pages).
+ * Kept small (mirrors node_rx_subrate_change) so it fits the node_rx pdu
+ * buffer rather than carrying the full 248-octet wire form.
+ */
+struct node_rx_read_all_remote_feat {
+	uint8_t status;
+	uint8_t max_remote_page;
+	uint8_t max_valid_page;
+	/* Stored in wire (little-endian) octet form to keep the struct byte
+	 * sized (no uint64 alignment/padding) so it fits the node_rx pdu buffer.
+	 */
+	uint8_t features_page_0[8];
+	uint8_t features_page_1[24];
+};
+#endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
