@@ -1,0 +1,63 @@
+# CI for the Shorter Connection Intervals (SCI) CONTROLLER (RCV tier).
+#
+# Compile-checks the controller-side SCI code in a real LL_SW build (nrf52_bsim)
+# by turning CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS on via the overlay and
+# confirming the additions compile + link. Build-only while the procedure FSM,
+# HCI backends, and bsim test are landed incrementally; the end-to-end
+# Connection Rate run is added to this job in the test step.
+#
+# The Subrating and Extended Feature Set workflows run in parallel as the
+# SCI-off regression (the always-compiled feature-bit defines, the ctx data
+# union member, Kconfig).
+name: Shorter Connection Intervals Controller
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+jobs:
+  sci-controller-compile:
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/zephyrproject-rtos/ci-repo-cache:v0.27.4.20241026
+      options: "--entrypoint /bin/bash"
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+      BSIM_OUT_PATH: /opt/bsim/
+      BSIM_COMPONENTS_PATH: /opt/bsim/components
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Clone cached Zephyr repository (speeds up checkout/update)
+        continue-on-error: true
+        run: |
+          git clone --shared /repo-cache/zephyrproject/zephyr .
+          git remote set-url origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: West init + update
+        run: |
+          west init -l . || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update --path-cache /repo-cache/zephyrproject 1> west.update.log 2>&1 \
+            || west update 1> west.update.log 2>&1
+          west forall -c 'git reset --hard HEAD'
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
+
+      - name: Compile controller with Shorter Connection Intervals ON (nRF52, build-only)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+          conf_overlay="${ZEPHYR_BASE}/tests/bsim/bluetooth/ll/conn_subrate/overlay-sci.conf" \
+            app=tests/bsim/bluetooth/ll/conn_subrate compile
+          wait_for_background_jobs

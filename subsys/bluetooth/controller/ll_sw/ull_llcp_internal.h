@@ -34,6 +34,9 @@ enum llcp_proc {
 #if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
 	PROC_FEATURE_PAGE_EXCHANGE,
 #endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	PROC_CONN_RATE_UPDATE,
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 	/* A helper enum entry, to use in pause procedure context */
 	PROC_NONE = 0x0,
 };
@@ -373,6 +376,35 @@ struct proc_ctx {
 			uint16_t latency;
 		} subrate;
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+		/* Connection Rate Update / Request Procedure (Shorter Connection
+		 * Intervals): a connection-interval change applied at an instant
+		 * (like Connection Update) fused with subrate negotiation.
+		 */
+		struct {
+			uint8_t  error;
+			uint8_t  rejected_opcode;
+			uint8_t  win_size;
+			uint16_t instant;
+			/* Requested connection-interval window (internal 1.25 ms units) */
+			uint16_t interval_min;
+			uint16_t interval_max;
+			/* Negotiated connection interval (internal 1.25 ms units) */
+			uint16_t interval;
+			uint32_t win_offset_us;
+			/* Requested subrate parameters (from LL_CONNECTION_RATE_REQ / HCI) */
+			uint16_t subrate_factor_min;
+			uint16_t subrate_factor_max;
+			uint16_t max_latency;
+			uint16_t continuation_number;
+			uint16_t timeout;
+			/* Negotiated parameters (sent/received in LL_CONNECTION_RATE_IND) */
+			uint16_t subrate_factor;
+			uint16_t subrate_base_event;
+			uint16_t latency;
+		} conn_rate;
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 	} data;
 
 	struct {
@@ -778,6 +810,26 @@ void llcp_rp_subrate_run(struct ll_conn *conn, struct proc_ctx *ctx, void *param
 void llcp_rp_subrate_rx(struct ll_conn *conn, struct proc_ctx *ctx, struct node_rx_pdu *rx);
 void llcp_rp_subrate_tx_ack(struct ll_conn *conn, struct proc_ctx *ctx, struct node_tx *tx);
 #endif /* CONFIG_BT_CTLR_SUBRATING */
+
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+/*
+ * Connection Rate Update / Request Procedure Helper (Shorter Connection Intervals)
+ */
+void llcp_pdu_encode_conn_rate_req(struct proc_ctx *ctx, struct pdu_data *pdu);
+void llcp_pdu_decode_conn_rate_req(struct proc_ctx *ctx, struct pdu_data *pdu);
+void llcp_pdu_encode_conn_rate_ind(struct proc_ctx *ctx, struct pdu_data *pdu);
+void llcp_pdu_decode_conn_rate_ind(struct proc_ctx *ctx, struct pdu_data *pdu);
+
+void llcp_lp_conn_rate_init_proc(struct proc_ctx *ctx);
+void llcp_lp_conn_rate_run(struct ll_conn *conn, struct proc_ctx *ctx, void *param);
+void llcp_lp_conn_rate_rx(struct ll_conn *conn, struct proc_ctx *ctx, struct node_rx_pdu *rx);
+void llcp_lp_conn_rate_tx_ack(struct ll_conn *conn, struct proc_ctx *ctx, struct node_tx *tx);
+
+void llcp_rp_conn_rate_init_proc(struct proc_ctx *ctx);
+void llcp_rp_conn_rate_run(struct ll_conn *conn, struct proc_ctx *ctx, void *param);
+void llcp_rp_conn_rate_rx(struct ll_conn *conn, struct proc_ctx *ctx, struct node_rx_pdu *rx);
+void llcp_rp_conn_rate_tx_ack(struct ll_conn *conn, struct proc_ctx *ctx, struct node_tx *tx);
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
 /*
  * Remote Channel Map Update Procedure Helper
