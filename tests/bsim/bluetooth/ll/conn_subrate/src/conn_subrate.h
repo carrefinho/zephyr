@@ -24,15 +24,17 @@
  */
 #define ECV_LOWLAT_UNIT_US      125U
 #define ECV_US_TO_LL_UNITS(_us) ((uint16_t)((_us) / ECV_LOWLAT_UNIT_US - 1U))
-/* Decreasing interval == increasing scheduler difficulty. 1000/750 are the gated
- * points (1000 = the proven nRF52 spike point; 750 = the eval's safe ECV floor);
- * 875/625/500 are informational probes (625 = the eval's stretch goal, 500 =
- * below SDC's shipping floor). */
-#define ECV_SWEEP_US_LIST       { 1000U, 875U, 750U, 625U, 500U }
+/* Sweep descends until the anchor breaks, finding the floor per SoC. The
+ * low-latency path only engages for units < BT_HCI_LE_INTERVAL_MIN (6), i.e.
+ * <= 6*125 = 750 us at this unit -- higher intervals escape to the 1250 us grid
+ * (full reservation), so the sweep tops out at 750 us. 750 = the eval's safe ECV
+ * floor (the go/no-go gate); 625 = the stretch goal; 500/375/250 probe below
+ * (375 = the spec ECV floor, 250 = below the radio exchange, expected to break). */
+#define ECV_SWEEP_US_LIST       { 750U, 625U, 500U, 375U, 250U }
 #define ECV_COUNT_WINDOW_MS     2000  /* per-interval cadence measurement window */
 #define ECV_SETTLE_MS           1000  /* let each interval update take effect on air */
-#define ECV_GATE_PCT_1000       80U   /* sanity gate: 1 ms held 93% on nrf52_bsim */
-#define ECV_GATE_PCT_750        75U   /* go/no-go gate: the safe ECV floor under load */
+#define ECV_HOLD_PCT            75U   /* >= this cadence == anchor held at this interval */
+#define ECV_GATE_PCT_750        75U   /* go/no-go gate: the safe ECV floor must hold */
 
 /* Peripheral-initiated Connection Subrate Request parameters (5.1.20). A range
  * is requested so the central can grant the largest factor it accepts.

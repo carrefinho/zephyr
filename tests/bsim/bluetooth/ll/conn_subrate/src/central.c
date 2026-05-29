@@ -822,19 +822,23 @@ static void test_central_main_multi(void)
 
 /* ECV scheduling feasibility spike -- the go/no-go for the sub-1.25 ms tier.
  * Holds the same two-link split topology as central_multi, but sweeps link 0
- * down the sub-1.25 ms band (1000 -> 500 us) via the low-latency reduced-
- * reservation path (CONN_LOW_LAT_INT_UNIT_US == 125 us on this spike branch, so
- * (units + 1) * 125 lands on the exact ECV grid) while link 1 stays full-rate at
- * 30 ms. The question: can the LL_SW scheduler hold a sub-1.25 ms anchor under a
- * concurrent full-rate link on nRF54L (single timer), and down to what interval?
- * This exercises the reduced-reservation + is_abort_cb path with the low-lat
- * 52 us tIFS (the FSU-equivalent regime). Per-interval cadence is printed; the
- * hard gates are the 1 ms sanity point and the 750 us safe ECV floor.
+ * down the sub-1.25 ms band (750 -> 250 us) via the low-latency reduced-
+ * reservation path while link 1 stays full-rate at 30 ms. CONN_LOW_LAT_INT_UNIT_US
+ * == 125 us on this spike branch, so (units + 1) * 125 lands on the exact ECV
+ * grid; note the path only engages for units < BT_HCI_LE_INTERVAL_MIN (6), i.e.
+ * <= 750 us here -- higher values escape to the 1250 us grid, which is why the
+ * sweep tops out at 750 us. The question: can the LL_SW scheduler hold a
+ * sub-1.25 ms anchor under a concurrent full-rate link on nRF54L (single timer),
+ * and down to what interval? This exercises the reduced-reservation + is_abort_cb
+ * path with the low-lat 52 us tIFS (the FSU-equivalent regime). The sweep descends
+ * until the anchor breaks, finding the floor per SoC; the go/no-go gate is the
+ * 750 us safe floor holding -- drops BELOW it are the informational measured floor.
  */
 static void test_central_main_ecv_sweep(void)
 {
 	static const uint16_t sweep_us[] = ECV_SWEEP_US_LIST;
-	bool held_1000 = false, held_750 = false;
+	bool held_750 = false;
+	uint16_t lowest_held_us = 0U, broke_at_us = 0U;
 	uint16_t h0, h1;
 	int i, err;
 
@@ -882,12 +886,14 @@ static void test_central_main_ecv_sweep(void)
 		if (err) {
 			printk("ECV-SPIKE %4u us: param update (units=%u) REJECTED "
 			       "err %d -- stopping sweep\n", us, units, err);
+			broke_at_us = us;
 			break;
 		}
 		k_sleep(K_MSEC(ECV_SETTLE_MS));
 		if (m_unexpected_disc) {
 			printk("ECV-SPIKE %4u us: link DROPPED applying interval "
 			       "(anchor lost on the update) -- stopping sweep\n", us);
+			broke_at_us = us;
 			break;
 		}
 
@@ -897,6 +903,7 @@ static void test_central_main_ecv_sweep(void)
 		if (m_unexpected_disc) {
 			printk("ECV-SPIKE %4u us: link DROPPED under load (supervision "
 			       "timeout) -- stopping sweep\n", us);
+			broke_at_us = us;
 			break;
 		}
 		w0 = ll_test_conn_event_count[h0] - b0;
@@ -909,37 +916,44 @@ static void test_central_main_ecv_sweep(void)
 		       "30 ms link %u events in %u ms\n",
 		       us, w0, exp0, pct, w1, ECV_COUNT_WINDOW_MS);
 
-		if (us == 1000U && pct >= ECV_GATE_PCT_1000) {
-			held_1000 = true;
-		}
 		if (us == 750U && pct >= ECV_GATE_PCT_750) {
 			held_750 = true;
 		}
+		if (pct >= ECV_HOLD_PCT) {
+			/* sweep descends, so this is the lowest interval held so far */
+			lowest_held_us = us;
+		} else {
+			/* cadence collapsed without a hard drop -- this is the floor */
+			printk("ECV-SPIKE %4u us: cadence collapsed (<%u%%) -- floor "
+			       "reached, stopping sweep\n", us, ECV_HOLD_PCT);
+			broke_at_us = us;
+			break;
+		}
 	}
 
-	if (m_unexpected_disc) {
-		FAIL("ECV-SPIKE: a link dropped during the sweep -- LL_SW lost the "
-		     "sub-1.25 ms anchor under split load\n");
-		return;
-	}
-	if (!held_1000) {
-		FAIL("ECV-SPIKE: 1 ms link did not hold >=%u%% cadence (sanity) -- "
-		     "worse than the nRF52 reference spike\n", ECV_GATE_PCT_1000);
-		return;
-	}
+	/* Go/no-go: the 750 us safe floor must hold under the 30 ms-coex split load.
+	 * Drops / cadence-collapse BELOW 750 us are the informational measured floor,
+	 * not a failure -- the point of the sweep is to find where the anchor breaks.
+	 */
 	if (!held_750) {
-		FAIL("ECV-SPIKE: 750 us link did not hold >=%u%% cadence under the "
-		     "30 ms-coex split load -- the ECV safe-floor go/no-go FAILED on "
-		     "this target\n", ECV_GATE_PCT_750);
+		FAIL("ECV-SPIKE: 750 us did not hold >=%u%% under 30 ms-coex split load "
+		     "(broke at %u us, held down to %u us) -- the ECV safe-floor go/no-go "
+		     "FAILED on this target\n",
+		     ECV_GATE_PCT_750, broke_at_us, lowest_held_us);
 		return;
 	}
 
 	for (i = 0; i < 2; i++) {
 		(void)bt_conn_disconnect(m_conn[i], BT_HCI_ERR_REMOTE_USER_TERM_CONN);
 	}
-	PASS("ECV-SPIKE: 750 us anchor held >=%u%% under 30 ms-coex split load "
-	     "(1 ms + 750 us gates passed); see per-interval cadence for the "
-	     "875/625/500 us probe points\n", ECV_GATE_PCT_750);
+	if (broke_at_us) {
+		PASS("ECV-SPIKE: GO -- 750 us anchor held under 30 ms-coex split load; "
+		     "swept to a measured floor of %u us (broke at %u us)\n",
+		     lowest_held_us, broke_at_us);
+	} else {
+		PASS("ECV-SPIKE: GO -- 750 us anchor held; entire sweep held down to "
+		     "%u us under 30 ms-coex split load\n", lowest_held_us);
+	}
 	bs_trace_silent_exit(0);
 }
 #endif /* CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT */
