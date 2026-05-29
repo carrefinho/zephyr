@@ -891,6 +891,40 @@ void ull_central_setup(struct node_rx_pdu *rx, struct node_rx_ftr *ftr,
 #endif
 }
 
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+static void ticker_update_latency_cancel_op_cb(uint32_t ticker_status,
+					       void *param)
+{
+	struct ll_conn *conn = param;
+
+	LL_ASSERT(ticker_status == TICKER_STATUS_SUCCESS);
+
+	conn->central.latency_cancel = 0U;
+}
+
+void ull_central_latency_cancel(struct ll_conn *conn, uint16_t handle)
+{
+	/* break central subrating latency: pull the next subrated event
+	 * forward to the next anchor when host TX/control data is pending.
+	 */
+	if (conn->lll.latency_event && !conn->central.latency_cancel) {
+		uint32_t ticker_status;
+
+		conn->central.latency_cancel = 1U;
+
+		ticker_status =
+			ticker_update(TICKER_INSTANCE_ID_CTLR,
+				      TICKER_USER_ID_THREAD,
+				      (TICKER_ID_CONN_BASE + handle),
+				      0, 0, 0, 0, 1, 0,
+				      ticker_update_latency_cancel_op_cb,
+				      (void *)conn);
+		LL_ASSERT((ticker_status == TICKER_STATUS_SUCCESS) ||
+			  (ticker_status == TICKER_STATUS_BUSY));
+	}
+}
+#endif /* CONFIG_BT_CTLR_SUBRATING */
+
 void ull_central_ticker_cb(uint32_t ticks_at_expire, uint32_t ticks_drift,
 			  uint32_t remainder, uint16_t lazy, uint8_t force,
 			  void *param)
