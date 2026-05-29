@@ -62,6 +62,16 @@ struct lll_conn {
 	uint8_t data_chan_sel:1;
 	uint8_t role:1;
 
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	/* This connection uses the 1.25 ms interval grid with standard 150 us
+	 * tIFS even for sub-7.5 ms (RCV) intervals. Set when a Connection Rate
+	 * Update commits; consulted by the interval-unit / tIFS branches in
+	 * ull_conn.c so an RCV interval (< BT_HCI_LE_INTERVAL_MIN) is not misread
+	 * as a proprietary low-latency (500 us-unit, 52 us-tIFS) interval.
+	 */
+	uint8_t rcv:1;
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
 	union {
 		struct {
 			uint8_t data_chan_hop;

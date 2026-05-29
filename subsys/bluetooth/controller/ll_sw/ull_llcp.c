@@ -1184,11 +1184,12 @@ uint8_t ull_cp_conn_rate_req(struct ll_conn *conn, uint16_t interval_min, uint16
 	struct proc_ctx *ctx;
 
 	if (conn->lll.role == BT_HCI_ROLE_CENTRAL) {
-		/* Core 6.2, 5.1.32: the peer (Peripheral) must support SCI. This
-		 * reads feature page 1, so the Extended Feature Set page exchange
-		 * must have completed (ext_valid); otherwise treat as unsupported.
+		/* Core 6.2, 5.1.32: the Central must confirm the peer's SCI Host
+		 * Support bit (73, page 1) is set before initiating -- not merely the
+		 * controller capability bit (72). Requires the Extended Feature Set
+		 * page exchange to have completed (ext_valid).
 		 */
-		if (!feature_peer_sci(conn)) {
+		if (!feature_peer_sci_host(conn)) {
 			return BT_HCI_ERR_UNSUPP_REMOTE_FEATURE;
 		}
 	} else {

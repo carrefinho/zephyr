@@ -88,6 +88,17 @@ LOG_MODULE_REGISTER(bt_ctlr_ull_conn);
 volatile uint32_t ll_test_conn_event_count[CONFIG_BT_MAX_CONN];
 #endif
 
+/* A Shorter Connection Intervals (RCV) link uses the 1.25 ms interval grid with
+ * standard 150 us tIFS even for intervals below BT_HCI_LE_INTERVAL_MIN (7.5 ms),
+ * so the interval-unit / tIFS branches below must NOT treat it as a proprietary
+ * 500 us-unit low-latency interval. (false when SCI is disabled.)
+ */
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+#define CONN_USES_1250_GRID(_lll) ((_lll)->rcv)
+#else
+#define CONN_USES_1250_GRID(_lll) (false)
+#endif
+
 static int init_reset(void);
 #if !defined(CONFIG_BT_CTLR_LOW_LAT)
 static void tx_demux_sched(struct ll_conn *conn);
@@ -847,7 +858,7 @@ uint8_t ll_apto_get(uint16_t handle, uint16_t *apto)
 		return BT_HCI_ERR_UNKNOWN_CONN_ID;
 	}
 
-	if (conn->lll.interval >= BT_HCI_LE_INTERVAL_MIN) {
+	if ((conn->lll.interval >= BT_HCI_LE_INTERVAL_MIN) || CONN_USES_1250_GRID(&conn->lll)) {
 		*apto = conn->apto_reload * conn->lll.interval *
 			CONN_INT_UNIT_US / (10U * USEC_PER_MSEC);
 	} else {
@@ -867,7 +878,7 @@ uint8_t ll_apto_set(uint16_t handle, uint16_t apto)
 		return BT_HCI_ERR_UNKNOWN_CONN_ID;
 	}
 
-	if (conn->lll.interval >= BT_HCI_LE_INTERVAL_MIN) {
+	if ((conn->lll.interval >= BT_HCI_LE_INTERVAL_MIN) || CONN_USES_1250_GRID(&conn->lll)) {
 		conn->apto_reload =
 			RADIO_CONN_EVENTS(apto * 10U * USEC_PER_MSEC,
 					  conn->lll.interval *
@@ -1401,7 +1412,7 @@ void ull_conn_done(struct node_rx_event_done *done)
 		if (!conn->supervision_expire) {
 			uint32_t conn_interval_us;
 
-			if (conn->lll.interval >= BT_HCI_LE_INTERVAL_MIN) {
+			if ((conn->lll.interval >= BT_HCI_LE_INTERVAL_MIN) || CONN_USES_1250_GRID(&conn->lll)) {
 				conn_interval_us = conn->lll.interval *
 						   CONN_INT_UNIT_US;
 			} else {
@@ -2552,7 +2563,7 @@ void ull_conn_update_parameters(struct ll_conn *conn, uint8_t is_cu_proc, uint8_
 #endif
 
 	/* compensate for instant_latency due to laziness */
-	if (lll->interval >= BT_HCI_LE_INTERVAL_MIN) {
+	if ((lll->interval >= BT_HCI_LE_INTERVAL_MIN) || CONN_USES_1250_GRID(lll)) {
 		conn_interval_old = instant_latency * lll->interval;
 		conn_interval_unit_old = CONN_INT_UNIT_US;
 	} else {
@@ -2560,7 +2571,7 @@ void ull_conn_update_parameters(struct ll_conn *conn, uint8_t is_cu_proc, uint8_
 		conn_interval_unit_old = CONN_LOW_LAT_INT_UNIT_US;
 	}
 
-	if (interval >= BT_HCI_LE_INTERVAL_MIN) {
+	if ((interval >= BT_HCI_LE_INTERVAL_MIN) || CONN_USES_1250_GRID(lll)) {
 		uint16_t max_tx_time;
 		uint16_t max_rx_time;
 		uint32_t slot_us;
@@ -2744,7 +2755,7 @@ void ull_conn_update_peer_sca(struct ll_conn *conn)
 	lll = &conn->lll;
 
 	/* calculate the window widening and interval */
-	if (lll->interval >= BT_HCI_LE_INTERVAL_MIN) {
+	if ((lll->interval >= BT_HCI_LE_INTERVAL_MIN) || CONN_USES_1250_GRID(lll)) {
 		conn_interval_us = lll->interval *
 				   CONN_INT_UNIT_US;
 	} else {
