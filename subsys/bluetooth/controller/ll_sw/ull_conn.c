@@ -137,6 +137,20 @@ static inline uint32_t conn_interval_unit_us(const struct lll_conn *lll)
 	return CONN_INT_UNIT_US;
 }
 
+/* On-air connection interval in microseconds (folds in the proprietary
+ * low-latency (interval + 1) convention).
+ */
+static inline uint32_t conn_interval_us_get(const struct lll_conn *lll)
+{
+	uint32_t units = lll->interval;
+
+	if (conn_interval_is_low_lat(lll)) {
+		units += 1U;
+	}
+
+	return units * conn_interval_unit_us(lll);
+}
+
 static int init_reset(void);
 #if !defined(CONFIG_BT_CTLR_LOW_LAT)
 static void tx_demux_sched(struct ll_conn *conn);
@@ -936,13 +950,8 @@ uint8_t ll_apto_get(uint16_t handle, uint16_t *apto)
 		return BT_HCI_ERR_UNKNOWN_CONN_ID;
 	}
 
-	if ((conn->lll.interval >= BT_HCI_LE_INTERVAL_MIN) || CONN_USES_1250_GRID(&conn->lll)) {
-		*apto = conn->apto_reload * conn->lll.interval *
-			CONN_INT_UNIT_US / (10U * USEC_PER_MSEC);
-	} else {
-		*apto = conn->apto_reload * (conn->lll.interval + 1U) *
-			CONN_LOW_LAT_INT_UNIT_US / (10U * USEC_PER_MSEC);
-	}
+	*apto = conn->apto_reload * conn_interval_us_get(&conn->lll) /
+		(10U * USEC_PER_MSEC);
 
 	return 0;
 }
@@ -956,17 +965,8 @@ uint8_t ll_apto_set(uint16_t handle, uint16_t apto)
 		return BT_HCI_ERR_UNKNOWN_CONN_ID;
 	}
 
-	if ((conn->lll.interval >= BT_HCI_LE_INTERVAL_MIN) || CONN_USES_1250_GRID(&conn->lll)) {
-		conn->apto_reload =
-			RADIO_CONN_EVENTS(apto * 10U * USEC_PER_MSEC,
-					  conn->lll.interval *
-					  CONN_INT_UNIT_US);
-	} else {
-		conn->apto_reload =
-			RADIO_CONN_EVENTS(apto * 10U * USEC_PER_MSEC,
-					  (conn->lll.interval + 1U) *
-					  CONN_LOW_LAT_INT_UNIT_US);
-	}
+	conn->apto_reload = RADIO_CONN_EVENTS(apto * 10U * USEC_PER_MSEC,
+					      conn_interval_us_get(&conn->lll));
 
 	return 0;
 }
@@ -1507,15 +1507,8 @@ void ull_conn_done(struct node_rx_event_done *done)
 	else {
 		/* Start supervision timeout, if not started already */
 		if (!conn->supervision_expire) {
-			uint32_t conn_interval_us;
-
-			if ((conn->lll.interval >= BT_HCI_LE_INTERVAL_MIN) || CONN_USES_1250_GRID(&conn->lll)) {
-				conn_interval_us = conn->lll.interval *
-						   CONN_INT_UNIT_US;
-			} else {
-				conn_interval_us = (conn->lll.interval + 1U) *
-						   CONN_LOW_LAT_INT_UNIT_US;
-			}
+			uint32_t conn_interval_us =
+				conn_interval_us_get(&conn->lll);
 
 			conn->supervision_expire = RADIO_CONN_EVENTS(
 				(conn->supervision_timeout * 10U * USEC_PER_MSEC),
@@ -2687,8 +2680,14 @@ void ull_conn_update_parameters(struct ll_conn *conn, uint8_t is_cu_proc, uint8_
 		reduced_reservation = reduced_reservation || lll->reduced_ce;
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
-		/* (1) interval-unit / grid */
-		if (grid_1250) {
+		/* (1) interval-unit / grid: ECV carries a 125 us-granular interval;
+		 * RCV / >= 7.5 ms uses the 1.25 ms unit; legacy low-latency uses the
+		 * 500 us unit with the (interval + 1) convention.
+		 */
+		if (CONN_INTERVAL_IS_ECV(lll)) {
+			conn_interval_new = interval;
+			conn_interval_unit_new = CONN_ECV_INT_UNIT_US;
+		} else if (grid_1250) {
 			conn_interval_new = interval;
 			conn_interval_unit_new = CONN_INT_UNIT_US;
 		} else {
@@ -2697,10 +2696,10 @@ void ull_conn_update_parameters(struct ll_conn *conn, uint8_t is_cu_proc, uint8_
 		}
 
 		/* (2) tIFS: shortened only on the proprietary low-latency path; an
-		 * RCV/ECV link on the 1.25 ms grid keeps the standard 150 us tIFS
-		 * (FSU may later shorten it, independently of the reservation).
+		 * RCV/ECV link keeps the standard 150 us tIFS (FSU may later shorten
+		 * it, independently of the reservation).
 		 */
-		if (grid_1250) {
+		if (grid_1250 || CONN_INTERVAL_IS_ECV(lll)) {
 			lll->tifs_tx_us = EVENT_IFS_DEFAULT_US;
 			lll->tifs_rx_us = EVENT_IFS_DEFAULT_US;
 			lll->tifs_hcto_us = EVENT_IFS_DEFAULT_US;
@@ -2796,6 +2795,10 @@ void ull_conn_update_parameters(struct ll_conn *conn, uint8_t is_cu_proc, uint8_
 					   lll_clock_ppm_get(conn->periph.sca)) *
 					  conn_interval_us), 1000000U);
 		lll->periph.window_widening_max_us = (conn_interval_us >> 1U) - EVENT_IFS_US;
+		/* WinSize/WinOffset are in 1.25 ms units per spec regardless of the
+		 * interval tier, so keep CONN_INT_UNIT_US here. (ECV WinSize semantics
+		 * are revisited with the conn_rate IND field units + a test.)
+		 */
 		lll->periph.window_size_prepare_us = win_size * CONN_INT_UNIT_US;
 
 #if defined(CONFIG_BT_CTLR_CONN_PARAM_REQ)
@@ -2886,13 +2889,7 @@ void ull_conn_update_peer_sca(struct ll_conn *conn)
 	lll = &conn->lll;
 
 	/* calculate the window widening and interval */
-	if ((lll->interval >= BT_HCI_LE_INTERVAL_MIN) || CONN_USES_1250_GRID(lll)) {
-		conn_interval_us = lll->interval *
-				   CONN_INT_UNIT_US;
-	} else {
-		conn_interval_us = (lll->interval + 1U) *
-				   CONN_LOW_LAT_INT_UNIT_US;
-	}
+	conn_interval_us = conn_interval_us_get(lll);
 	periodic_us = conn_interval_us;
 
 	lll->periph.window_widening_periodic_us =
