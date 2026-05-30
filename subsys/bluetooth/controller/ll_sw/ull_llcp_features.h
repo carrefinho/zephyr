@@ -223,6 +223,19 @@ static inline bool feature_peer_sci_host(struct ll_conn *conn)
 }
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+/* Frame Space Update feature bit (65) lives on the peer's feature page 1, valid
+ * only once the Feature Page Exchange procedure has populated it. Bit 65 is not
+ * host-gated (Host-Controlled = N), so a single accessor suffices.
+ */
+static inline bool feature_peer_frame_space_update(struct ll_conn *conn)
+{
+	return conn->llcp.fex.ext_valid && (conn->llcp.fex.max_page_peer >= 1U) &&
+	       (conn->llcp.fex.features_peer_ext[(BT_LE_FEAT_BIT_FRAME_SPACE_UPDATE - 64) / 8] &
+		BIT(BT_LE_FEAT_BIT_FRAME_SPACE_UPDATE & 7)) != 0U;
+}
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
+
 /*
  * The following features are not yet defined in KConfig and do
  * not have a bitfield defined in ll_feat.h
