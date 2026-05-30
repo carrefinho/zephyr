@@ -1814,6 +1814,7 @@ static void test_central_tick(bs_time_t HW_device_time)
 	}
 }
 
+#if defined(CONFIG_BT_SHORTER_CONNECTION_INTERVALS)
 /* Connection Rate Update (instant) colliding with a peer Connection Update
  * (instant). The Central drives a 1.25 ms rate update at the same uptime the
  * Peripheral drives a Connection Parameters Request; the instant arbiter must
@@ -2065,6 +2066,7 @@ static void test_central_main_sci_latency(void)
 	PASS("One-way latency @1.25 ms: min %lld / avg %lld / max %lld us (%d samples)\n",
 	     lat_min_us, lat_sum_us / lat_count, lat_max_us, lat_count);
 }
+#endif /* CONFIG_BT_SHORTER_CONNECTION_INTERVALS */
 
 static const struct bst_test_instance test_central[] = {
 	{
@@ -2214,6 +2216,17 @@ static const struct bst_test_instance test_central[] = {
 		.test_main_f = test_central_main_sci_coex,
 	},
 	{
+		.test_id = "central_ecv_coex",
+		.test_descr = "Central: a 625 us ECV link (125 us grid, 150 us tIFS, "
+			      "reduced CE) coexisting with a 30 ms link -- the under-split-"
+			      "load proof that the reduced-CE reservation holds a sub-1.25 ms "
+			      "interval without starving the co-resident link.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_ecv_coex,
+	},
+#endif
+	{
 		.test_id = "central_sci_collision",
 		.test_descr = "Central: a Connection Rate Update collides with a peer "
 			      "Connection Update (two instants at the same uptime); the "
@@ -2231,17 +2244,6 @@ static const struct bst_test_instance test_central[] = {
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_sci_latency,
 	},
-	{
-		.test_id = "central_ecv_coex",
-		.test_descr = "Central: a 625 us ECV link (125 us grid, 150 us tIFS, "
-			      "reduced CE) coexisting with a 30 ms link -- the under-split-"
-			      "load proof that the reduced-CE reservation holds a sub-1.25 ms "
-			      "interval without starving the co-resident link.",
-		.test_pre_init_f = test_central_init,
-		.test_tick_f = test_central_tick,
-		.test_main_f = test_central_main_ecv_coex,
-	},
-#endif
 #endif
 	BSTEST_END_MARKER,
 };
