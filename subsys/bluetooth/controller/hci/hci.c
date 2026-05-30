@@ -8747,8 +8747,10 @@ static void le_conn_rate_change_event(struct pdu_data *pdu_data, uint16_t handle
 	cr = node;
 	sep->status = cr->status;
 	sep->handle = sys_cpu_to_le16(handle);
-	/* Internal 1.25 ms units -> 125 us units on the HCI event */
-	sep->conn_interval = sys_cpu_to_le16(cr->conn_interval * 10U);
+	/* cr->conn_interval is already in 125 us units (the notifier applied the
+	 * RCV x10 / ECV x1 tier conversion).
+	 */
+	sep->conn_interval = sys_cpu_to_le16(cr->conn_interval);
 	sep->subrate_factor = sys_cpu_to_le16(cr->subrate_factor);
 	sep->peripheral_latency = sys_cpu_to_le16(cr->peripheral_latency);
 	sep->continuation_number = sys_cpu_to_le16(cr->continuation_number);

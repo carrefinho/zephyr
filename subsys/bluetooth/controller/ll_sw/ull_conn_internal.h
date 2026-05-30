@@ -12,6 +12,12 @@ struct ll_conn *ll_connected_get(uint16_t handle);
 uint16_t ll_conn_free_count_get(void);
 void ll_tx_ack_put(uint16_t handle, struct node_tx *node_tx);
 int ull_conn_init(void);
+
+/* On-air connection interval in microseconds for this lll_conn (handles the RCV
+ * 1.25 ms / ECV 125 us / proprietary low-latency 500 us units). Defined in
+ * ull_conn.c; used by the LLCP termination PRT calc in ull_llcp_common.c.
+ */
+uint32_t conn_interval_us_get(const struct lll_conn *lll);
 int ull_conn_reset(void);
 uint16_t ull_conn_default_tx_octets_get(void);
 uint16_t ull_conn_default_tx_time_get(void);

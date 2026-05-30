@@ -153,7 +153,7 @@ uint8_t ull_cp_subrate_req(struct ll_conn *conn, uint16_t subrate_min, uint16_t 
  */
 uint8_t ull_cp_conn_rate_req(struct ll_conn *conn, uint16_t interval_min, uint16_t interval_max,
 			     uint16_t subrate_min, uint16_t subrate_max, uint16_t max_latency,
-			     uint16_t continuation_number, uint16_t timeout);
+			     uint16_t continuation_number, uint16_t timeout, bool is_ecv);
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
 /**

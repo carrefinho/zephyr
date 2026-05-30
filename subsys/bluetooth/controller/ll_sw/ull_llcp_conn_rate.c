@@ -172,16 +172,22 @@ enum {
  */
 static bool conn_rate_req_acceptable(struct ll_conn *conn, struct proc_ctx *ctx)
 {
+	const bool is_ecv = ctx->data.conn_rate.ecv;
 	const uint16_t interval_max = ctx->data.conn_rate.interval_max;
 	const uint16_t sf_min = ctx->data.conn_rate.subrate_factor_min;
 	const uint16_t sf_max = ctx->data.conn_rate.subrate_factor_max;
 	const uint16_t max_latency = ctx->data.conn_rate.max_latency;
 	const uint16_t timeout = ctx->data.conn_rate.timeout;
+	/* Tier-native bounds: ECV is 125 us units [3 (375 us), 32000 (4 s)];
+	 * RCV is 1.25 ms units [1 (1250 us), 3200 (4 s)].
+	 */
+	const uint16_t interval_min_lim = is_ecv ? 3U : CONN_RATE_INTERVAL_MIN_UNITS;
+	const uint16_t interval_max_lim = is_ecv ? 32000U : CONN_RATE_INTERVAL_MAX_UNITS;
 
 	ARG_UNUSED(conn);
 
-	if ((interval_max < CONN_RATE_INTERVAL_MIN_UNITS) ||
-	    (interval_max > CONN_RATE_INTERVAL_MAX_UNITS) ||
+	if ((interval_max < interval_min_lim) ||
+	    (interval_max > interval_max_lim) ||
 	    (ctx->data.conn_rate.interval_min > interval_max)) {
 		return false;
 	}
@@ -191,11 +197,11 @@ static bool conn_rate_req_acceptable(struct ll_conn *conn, struct proc_ctx *ctx)
 		return false;
 	}
 
-	/* Supervision timeout (10 ms units) must exceed 2 x connInterval (1.25 ms
-	 * units) x SubrateFactorMin x (Max_Latency + 1); scaled by 4 as in
-	 * ull_llcp_conn_upd.c / ull_llcp_subrate.c.
+	/* Supervision timeout (10 ms units) must exceed 2 x connInterval x
+	 * SubrateFactorMin x (Max_Latency + 1); scaled by (10 ms / interval-unit) / 2:
+	 * x4 for RCV (1.25 ms units), x40 for ECV (125 us units).
 	 */
-	if (((uint32_t)timeout * 4U) <=
+	if (((uint32_t)timeout * (is_ecv ? 40U : 4U)) <=
 	    ((uint32_t)interval_max * sf_min * (max_latency + 1U))) {
 		return false;
 	}
@@ -261,12 +267,22 @@ static void conn_rate_apply(struct ll_conn *conn, struct proc_ctx *ctx)
 	 */
 	uint16_t base_event = ctx->data.conn_rate.instant;
 
-	/* Mark this as an RCV link so the interval-unit / tIFS branches in
-	 * ull_conn.c treat the (possibly sub-7.5 ms) interval as 1.25 ms-grid with
-	 * 150 us tIFS, not as a proprietary 500 us-unit low-latency interval. Must
-	 * be set BEFORE ull_conn_update_parameters reads the new interval.
+	/* Mark the tier BEFORE ull_conn_update_parameters reads the new interval so
+	 * the interval-unit / tIFS / reservation branches in ull_conn.c interpret it
+	 * correctly (neither is the proprietary 500 us low-latency path):
+	 *   - ECV: 125 us grid + standard 150 us tIFS + a reduced CE reservation (a
+	 *     sub-1.25 ms interval cannot fit a full-event slot).
+	 *   - RCV: 1.25 ms grid + 150 us tIFS + the full reservation (unchanged).
 	 */
-	conn->lll.rcv = 1U;
+	if (ctx->data.conn_rate.ecv) {
+		conn->lll.ecv = 1U;
+		conn->lll.rcv = 0U;
+		conn->lll.reduced_ce = 1U;
+	} else {
+		conn->lll.rcv = 1U;
+		conn->lll.ecv = 0U;
+		conn->lll.reduced_ce = 0U;
+	}
 
 	/* Change the connection interval at the instant (is_cu_proc=true: this is
 	 * an explicit Host/peer-driven update, not an internal one). This sets
@@ -308,7 +324,10 @@ static void conn_rate_ntf(struct ll_conn *conn, struct proc_ctx *ctx)
 
 	cr = (struct node_rx_conn_rate_change *)ntf->pdu;
 	cr->status = ctx->data.conn_rate.error;
-	cr->conn_interval = conn->lll.interval;
+	/* Report the interval in canonical 125 us units so the HCI event encoder is
+	 * tier-agnostic: RCV stores 1.25 ms units (x10), ECV stores 125 us units (x1).
+	 */
+	cr->conn_interval = conn->lll.interval * (conn->lll.ecv ? 1U : 10U);
 	cr->subrate_factor = conn->subrate.factor;
 	cr->peripheral_latency = conn->subrate.peripheral_latency;
 	cr->continuation_number = conn->subrate.continuation_number;

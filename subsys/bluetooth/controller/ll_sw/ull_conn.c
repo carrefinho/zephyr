@@ -138,9 +138,10 @@ static inline uint32_t conn_interval_unit_us(const struct lll_conn *lll)
 }
 
 /* On-air connection interval in microseconds (folds in the proprietary
- * low-latency (interval + 1) convention).
+ * low-latency (interval + 1) convention). Exported (declared in
+ * ull_conn_internal.h) for the LLCP termination PRT calc in ull_llcp_common.c.
  */
-static inline uint32_t conn_interval_us_get(const struct lll_conn *lll)
+uint32_t conn_interval_us_get(const struct lll_conn *lll)
 {
 	uint32_t units = lll->interval;
 
@@ -477,24 +478,32 @@ uint8_t ll_conn_rate_req_send(uint16_t handle, uint16_t interval_min_125us,
 	struct ll_conn *conn;
 	uint16_t interval_min;
 	uint16_t interval_max;
+	bool is_ecv;
 
 	conn = ll_connected_get(handle);
 	if (!conn) {
 		return BT_HCI_ERR_UNKNOWN_CONN_ID;
 	}
 
-	/* RCV grid (the third enforcement site, alongside the PDU codec and the
-	 * defaults store): the connection interval is in 125 us units and must be
-	 * a multiple of 10 (1.25 ms) in [1250 us, 4 s]; reject ECV / sub-floor and
-	 * convert to the internal 1.25 ms grid so the controller never emits ECV.
+	/* The connection interval is in 125 us units. Accept RCV (a multiple of 10
+	 * = 1.25 ms, floor 1250 us) or ECV (125 us-granular, floor 375 us); both
+	 * ends must be the same tier (reject a straddle). One of three enforcement
+	 * sites, with the PDU codec and the defaults store.
 	 */
-	if ((interval_min_125us % 10U) != 0U || (interval_max_125us % 10U) != 0U ||
-	    (interval_min_125us < 0x000AU) || (interval_max_125us > 0x7D00U) ||
+	is_ecv = (interval_min_125us % 10U) != 0U;
+	if ((((interval_max_125us % 10U) != 0U) != is_ecv) ||
+	    (interval_min_125us < (is_ecv ? 0x0003U : 0x000AU)) ||
+	    (interval_max_125us > 0x7D00U) ||
 	    (interval_max_125us < interval_min_125us)) {
 		return BT_HCI_ERR_INVALID_PARAM;
 	}
-	interval_min = interval_min_125us / 10U;
-	interval_max = interval_max_125us / 10U;
+	if (is_ecv) {
+		interval_min = interval_min_125us;       /* 125 us units */
+		interval_max = interval_max_125us;
+	} else {
+		interval_min = interval_min_125us / 10U; /* 1.25 ms units */
+		interval_max = interval_max_125us / 10U;
+	}
 
 	/* Subrate parameter range checks, Core Spec Vol 4, Part E, Section 7.8 */
 	if ((subrate_min < 0x0001U) || (subrate_min > 0x01F4U) ||
@@ -507,17 +516,27 @@ uint8_t ll_conn_rate_req_send(uint16_t handle, uint16_t interval_min_125us,
 	}
 
 	/* Supervision timeout must exceed 2 x newInterval x Subrate_Max x
-	 * (Max_Latency + 1), scaled by 4 (interval 1.25 ms, timeout 10 ms).
-	 * Checked against the requested NEW interval, not the current one.
+	 * (Max_Latency + 1), checked against the requested NEW interval. The scale
+	 * is (10 ms / interval-unit) / 2: x4 for RCV (1.25 ms units), x40 for ECV
+	 * (125 us units).
 	 */
 	if (((uint32_t)interval_max * subrate_max * (max_latency + 1U)) >=
-	    ((uint32_t)supervision_timeout * 4U)) {
+	    ((uint32_t)supervision_timeout * (is_ecv ? 40U : 4U))) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	/* supervision_expire / apto_reload are 16-bit event counts; reject an
+	 * (interval, timeout) pair whose count would overflow. Only reachable with a
+	 * small ECV interval and a long timeout -- RCV (>= 1.25 ms) never overflows.
+	 */
+	if ((((uint32_t)supervision_timeout * 10000U) /
+	     ((uint32_t)interval_max * (is_ecv ? 125U : 1250U))) >= 65536U) {
 		return BT_HCI_ERR_INVALID_PARAM;
 	}
 
 	return ull_cp_conn_rate_req(conn, interval_min, interval_max, subrate_min,
 				    subrate_max, max_latency, continuation_number,
-				    supervision_timeout);
+				    supervision_timeout, is_ecv);
 }
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 

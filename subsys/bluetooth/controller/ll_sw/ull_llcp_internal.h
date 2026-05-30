@@ -393,10 +393,14 @@ struct proc_ctx {
 			 */
 			uint8_t  ecv:1;
 			uint16_t instant;
-			/* Requested connection-interval window (internal 1.25 ms units) */
+			/* Requested connection-interval window (125 us units if
+			 * ecv, else internal 1.25 ms units)
+			 */
 			uint16_t interval_min;
 			uint16_t interval_max;
-			/* Negotiated connection interval (internal 1.25 ms units) */
+			/* Negotiated connection interval (125 us units if ecv,
+			 * else internal 1.25 ms units)
+			 */
 			uint16_t interval;
 			uint32_t win_offset_us;
 			/* Requested subrate parameters (from LL_CONNECTION_RATE_REQ / HCI) */
