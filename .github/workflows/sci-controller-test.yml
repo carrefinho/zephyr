@@ -87,6 +87,19 @@ jobs:
             app=tests/bsim/bluetooth/ll/conn_subrate compile
           wait_for_background_jobs
 
+      # Build-only: compile the Frame Space Update (FSU) controller code with
+      # CONFIG_BT_CTLR_FRAME_SPACE_UPDATE=y so the FSU feature advertise / LLCP /
+      # HCI additions stay on the compile path as they land step by step. The
+      # end-to-end FSU bsim run is added with the procedure + test (later step).
+      - name: Compile controller with Frame Space Update ON (nRF52, build-only)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+          conf_overlay="${ZEPHYR_BASE}/tests/bsim/bluetooth/ll/conn_subrate/overlay-fsu.conf" \
+            app=tests/bsim/bluetooth/ll/conn_subrate compile
+          wait_for_background_jobs
+
       - name: Run the Connection Rate Update scenario (nRF52 bsim)
         shell: bash
         run: |

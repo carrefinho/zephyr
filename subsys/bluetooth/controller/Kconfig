@@ -134,6 +134,9 @@ config BT_CTLR_EXTENDED_FEAT_SET_SUPPORT
 config BT_CTLR_SHORTER_CONNECTION_INTERVALS_SUPPORT
 	bool
 
+config BT_CTLR_FRAME_SPACE_UPDATE_SUPPORT
+	bool
+
 # Virtual option that all local LL implementations should select
 config HAS_BT_CTLR
 	bool
@@ -1202,6 +1205,40 @@ config BT_CTLR_SCI_ECV_INTERVAL_MIN_125US
 	  below ~625 us exhaust the prepare pipeline / event-overhead budget and would
 	  assert on apply. The default 3 keeps the spec floor for SoCs (or bsim) that
 	  can sustain it.
+
+config BT_CTLR_FRAME_SPACE_UPDATE
+	bool "Frame Space Update"
+	depends on BT_CTLR_FRAME_SPACE_UPDATE_SUPPORT
+	depends on BT_CTLR_EXTENDED_FEAT_SET
+	select BT_CTLR_EXT_REJ_IND
+	help
+	  Enable support for Bluetooth 6.2 Frame Space Update (LL feature bit 65)
+	  in the controller: negotiate a shorter (or longer) inter-frame space
+	  (T_IFS, default 150 us) per connection via the LL_FRAME_SPACE_REQ/RSP
+	  procedure (Core 6.2 Vol 6 Part B Section 5.1.30), shrinking each
+	  connection event's air time and scheduler slot reservation. Companion to
+	  Shorter Connection Intervals; the value is multi-link density and
+	  active-power efficiency. Requires the Extended Feature Set (the feature
+	  bit is on page 1) and Extended Reject Indication (rejections use
+	  LL_REJECT_EXT_IND). Advertised directly by the controller -- no host
+	  feature-support bit (unlike Shorter Connection Intervals).
+
+config BT_CTLR_FSU_MIN_FRAME_SPACE_US
+	int "FSU minimum supported frame space (us)"
+	depends on BT_CTLR_FRAME_SPACE_UPDATE
+	default 80
+	range 40 150
+	help
+	  Hardware floor for the inter-frame space the controller will accept and
+	  apply via Frame Space Update, in microseconds. As responder it picks the
+	  lowest value it supports within the requested [FS_Min, FS_Max] range, and
+	  rejects (LL_REJECT_EXT_IND, Unsupported Feature or Parameter Value) a
+	  request whose FS_Min and FS_Max are both below this floor. Set it to the
+	  SoC's measured radio turnaround floor (HW-measurable, like the ECV
+	  interval floor). A value <= 145 us makes the controller conformant on the
+	  shorter-frame-space side per Core 6.2 Vol 6 Part B Section 4.6.46; 150
+	  disables shortening (lengthening, FS >= 155 us, still works and is also
+	  conformant).
 
 rsource "Kconfig.df"
 rsource "Kconfig.ll_sw_split"

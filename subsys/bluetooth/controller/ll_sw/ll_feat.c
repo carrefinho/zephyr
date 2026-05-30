@@ -148,6 +148,11 @@ void ll_feat_get_page(uint8_t page, uint8_t *out)
 				BIT(BT_LE_FEAT_BIT_SHORTER_CONN_INTERVALS_HOST_SUPP & 7);
 		}
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+		/* Bit 65: Frame Space Update (controller capability, not host-gated). */
+		out[(BT_LE_FEAT_BIT_FRAME_SPACE_UPDATE - 64) / 8] |=
+			BIT(BT_LE_FEAT_BIT_FRAME_SPACE_UPDATE & 7);
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
 		break;
 	default:
 		/* Unsupported page, leave all-zero */
