@@ -87,11 +87,11 @@ jobs:
             app=tests/bsim/bluetooth/ll/conn_subrate compile
           wait_for_background_jobs
 
-      # Build-only: compile the Frame Space Update (FSU) controller code with
-      # CONFIG_BT_CTLR_FRAME_SPACE_UPDATE=y so the FSU feature advertise / LLCP /
-      # HCI additions stay on the compile path as they land step by step. The
-      # end-to-end FSU bsim run is added with the procedure + test (later step).
-      - name: Compile controller with Frame Space Update ON (nRF52, build-only)
+      # Compile the Frame Space Update (FSU) controller + host code with
+      # CONFIG_BT_FRAME_SPACE_UPDATE=y. The conn_fsu.sh run step below exercises
+      # the full HCI 0x209D -> LL_FRAME_SPACE_REQ/RSP -> 0x35 event path against
+      # this build.
+      - name: Compile controller with Frame Space Update ON (nRF52)
         shell: bash
         run: |
           export ZEPHYR_BASE="${PWD}"
@@ -129,6 +129,13 @@ jobs:
           export EXECUTE_TIMEOUT=120
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_collision.sh
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_latency.sh
+
+      - name: Run the Frame Space Update scenario (nRF52 bsim)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=120
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_fsu.sh
 
   # Same SCI scenarios on the nRF54L15 bsim target -- the primary ZMK SoC. nRF54L
   # uses a single radio timer; the sub-7.5 ms RCV interval stresses the event
@@ -192,6 +199,15 @@ jobs:
             app=tests/bsim/bluetooth/ll/conn_subrate compile
           wait_for_background_jobs
 
+      - name: Compile controller with Frame Space Update ON (nRF54L)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+          conf_overlay="${ZEPHYR_BASE}/tests/bsim/bluetooth/ll/conn_subrate/overlay-fsu.conf" \
+            app=tests/bsim/bluetooth/ll/conn_subrate compile
+          wait_for_background_jobs
+
       - name: Run the SCI scenarios (nRF54L bsim)
         shell: bash
         run: |
@@ -203,6 +219,13 @@ jobs:
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_coex.sh
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_collision.sh
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_latency.sh
+
+      - name: Run the Frame Space Update scenario (nRF54L bsim)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=120
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_fsu.sh
 
   # Build-only check of the hardware-in-the-loop sci_latency sample for the
   # physical nRF54L15 DK (both roles), so it does not bit-rot against controller

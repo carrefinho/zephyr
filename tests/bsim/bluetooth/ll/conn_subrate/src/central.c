@@ -1301,6 +1301,179 @@ static void test_central_main_efs(void)
 }
 #endif /* CONFIG_BT_LE_EXTENDED_FEAT_SET */
 
+#if defined(CONFIG_BT_FRAME_SPACE_UPDATE)
+/* Frame Space Update (Core 6.2, LL feature bit 65) end-to-end. The Central
+ * connects, exchanges feature page 1 (FSU lives on page 1, so the peer's bit 65
+ * must be known before initiating), then runs bt_conn_le_frame_space_update.
+ *
+ * The responder (the peripheral controller) negotiates a frame space clamped to
+ * its configured floor (CONFIG_BT_CTLR_FSU_MIN_FRAME_SPACE_US = 80 us in
+ * overlay-fsu): a request for FS_Min = 60 us is granted as exactly 80 us. The
+ * procedure is control-plane-only on this fork (frame_space_apply is a stub,
+ * TODO(fsu-radio) -- the negotiated tIFS is reported but the radio is not
+ * retimed yet), so the link MUST survive an FSU; a drop would mean an FSM bug,
+ * not a radio timing change. A second request whose entire range sits below the
+ * floor (FS_Max = 70 < 80) must be rejected (BT_HCI_ERR_UNSUPP_FEATURE_PARAM_VAL,
+ * 0x11), never clamped below the floor.
+ *
+ * The peer is peripheral_plain: the controller answers the LL_FRAME_SPACE_REQ as
+ * the responder with no host action, so no FSU-specific peripheral test is
+ * needed (and peripheral_plain is unguarded, so it builds in the FSU-off configs
+ * too).
+ */
+static volatile bool fsu_done;
+static volatile uint8_t fsu_status = 0xFFU;
+static volatile uint16_t fsu_frame_space;
+static volatile uint8_t fsu_initiator = 0xFFU;
+
+static void fsu_updated(struct bt_conn *conn, uint8_t status,
+			const struct bt_conn_le_frame_space_info *params)
+{
+	ARG_UNUSED(conn);
+
+	fsu_status = status;
+	if (params != NULL) {
+		fsu_frame_space = params->frame_space;
+		fsu_initiator = params->initiator;
+	}
+	fsu_done = true;
+	printk("Central frame space updated: status 0x%02x fs %u us initiator %u\n",
+	       status, params != NULL ? params->frame_space : 0U,
+	       params != NULL ? params->initiator : 0xFFU);
+}
+
+static struct bt_conn_cb fsu_conn_callbacks = {
+	.connected = connected,
+	.disconnected = disconnected,
+	/* FSU is on feature page 1; reuse the EFS completion cb so the peer's
+	 * page-1 features (incl. its FSU bit 65) are known before initiating.
+	 */
+	.read_all_remote_feat_complete = efs_read_all_remote_feat_complete,
+	.frame_space_updated = fsu_updated,
+};
+
+static void test_central_main_fsu(void)
+{
+	struct bt_conn_le_frame_space_param param = {
+		.frame_space_min = 60U,   /* below the 80 us floor -> clamped up */
+		.frame_space_max = 150U,
+		.phys = BT_HCI_LE_FRAME_SPACE_UPDATE_PHY_1M_MASK |
+			BT_HCI_LE_FRAME_SPACE_UPDATE_PHY_2M_MASK,
+		.spacing_types =
+			BT_HCI_LE_FRAME_SPACE_UPDATE_SPACING_TYPE_IFS_ACL_CP_MASK |
+			BT_HCI_LE_FRAME_SPACE_UPDATE_SPACING_TYPE_IFS_ACL_PC_MASK,
+	};
+	int err;
+
+	bt_conn_cb_register(&fsu_conn_callbacks);
+
+	err = bt_enable(NULL);
+	if (err) {
+		FAIL("Bluetooth init failed (err %d)\n", err);
+		return;
+	}
+	printk("Central Bluetooth initialized (FSU)\n");
+
+	err = bt_le_scan_start(BT_LE_SCAN_ACTIVE, device_found);
+	if (err) {
+		FAIL("Scanning failed to start (err %d)\n", err);
+		return;
+	}
+
+	SUBRATE_WAIT(central_connected && default_conn);
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	/* Exchange feature page 1 so the peer's FSU bit 65 is known (Core 6.2). */
+	efs_complete = false;
+	err = bt_conn_le_read_all_remote_features(default_conn, 1U);
+	if (err) {
+		FAIL("Central read-all-remote-features request failed (err %d)\n", err);
+		return;
+	}
+	SUBRATE_WAIT(efs_complete);
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	/* Request a frame space; FS_Min = 60 us is below the responder's 80 us
+	 * floor, so the negotiated value must clamp up to exactly 80 us.
+	 */
+	fsu_done = false;
+	err = bt_conn_le_frame_space_update(default_conn, &param);
+	if (err) {
+		FAIL("Central frame space update request failed (err %d)\n", err);
+		return;
+	}
+	printk("Central requested a frame space update (min %u max %u us)\n",
+	       param.frame_space_min, param.frame_space_max);
+
+	SUBRATE_WAIT(fsu_done);
+	if (fsu_status != BT_HCI_ERR_SUCCESS) {
+		FAIL("Frame space update failed (status 0x%02x)\n", fsu_status);
+		return;
+	}
+	if (fsu_frame_space != 80U) {
+		FAIL("Negotiated frame space = %u us, expected 80 (floor-clamped from "
+		     "%u)\n", fsu_frame_space, param.frame_space_min);
+		return;
+	}
+	if (fsu_initiator != BT_HCI_LE_FRAME_SPACE_UPDATE_INITIATOR_LOCAL_HOST) {
+		FAIL("Unexpected FSU initiator %u (expected LOCAL_HOST %u)\n",
+		     fsu_initiator, BT_HCI_LE_FRAME_SPACE_UPDATE_INITIATOR_LOCAL_HOST);
+		return;
+	}
+	printk("Central frame space negotiated at %u us (floor-clamped from %u)\n",
+	       fsu_frame_space, param.frame_space_min);
+
+	/* Control-plane-only: no radio retiming, so the link must be unaffected.
+	 * Hold it to confirm it survives (an FSM bug would desync / drop it).
+	 */
+	k_sleep(K_MSEC(2000));
+	if (!central_connected || !default_conn) {
+		FAIL("Link dropped after the frame space update (the control-plane "
+		     "stub must not change radio timing)\n");
+		return;
+	}
+
+	/* A request whose entire range is below the floor (FS_Max = 70 < 80) must
+	 * be rejected by the responder, not clamped below the floor. The host range
+	 * check passes 40/70, so the controller responder is the gate.
+	 */
+	{
+		struct bt_conn_le_frame_space_param below = param;
+
+		below.frame_space_min = 40U;
+		below.frame_space_max = 70U;
+		fsu_done = false;
+		fsu_status = 0xFFU;
+		err = bt_conn_le_frame_space_update(default_conn, &below);
+		if (err) {
+			/* Rejected already at the request: also a valid below-floor
+			 * outcome (not applied).
+			 */
+			printk("Below-floor frame space update rejected at request "
+			       "(err %d)\n", err);
+		} else {
+			SUBRATE_WAIT(fsu_done);
+			if (fsu_status == BT_HCI_ERR_SUCCESS) {
+				FAIL("Below-floor frame space update {40,70} was "
+				     "accepted\n");
+				return;
+			}
+			printk("Below-floor frame space update correctly rejected "
+			       "(status 0x%02x)\n", fsu_status);
+		}
+	}
+
+	if (!central_connected || !default_conn) {
+		FAIL("Link dropped after the below-floor reject\n");
+		return;
+	}
+
+	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	PASS("Central FSU validated: 60->80 us floor clamp accepted, below-floor "
+	     "{40,70} rejected, link survived (control-plane)\n");
+}
+#endif /* CONFIG_BT_FRAME_SPACE_UPDATE */
+
 #if defined(CONFIG_BT_SHORTER_CONNECTION_INTERVALS)
 static volatile bool sci_changed;
 static volatile uint8_t sci_status = 0xFFU;
@@ -2184,6 +2357,18 @@ static const struct bst_test_instance test_central[] = {
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_efs,
+	},
+#endif
+#if defined(CONFIG_BT_FRAME_SPACE_UPDATE)
+	{
+		.test_id = "central_fsu",
+		.test_descr = "Central: Frame Space Update (Core 6.2) - exchange page 1 "
+			      "then negotiate a frame space; the responder clamps to its "
+			      "80 us floor, a below-floor request is rejected, and the "
+			      "link survives (control-plane only).",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_fsu,
 	},
 #endif
 #if defined(CONFIG_BT_SHORTER_CONNECTION_INTERVALS)
