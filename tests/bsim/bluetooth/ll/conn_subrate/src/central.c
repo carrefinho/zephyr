@@ -1477,6 +1477,32 @@ static void test_central_main_sci(void)
 		       min_info.groups[0].max_125us, min_info.groups[0].stride_125us);
 	}
 
+	/* Set Default Rate Parameters (HCI 0x20A2) must accept an ECV default on an
+	 * ECV controller -- the old multiple-of-1.25ms gate rejected it -- and still
+	 * reject a below-floor interval. Defaults are stored, not applied, so this
+	 * exercises only the relaxed validation.
+	 */
+	{
+		struct bt_conn_le_conn_rate_param ecv_def = param;
+
+		ecv_def.interval_min_125us = 5U;   /* 625 us, ECV */
+		ecv_def.interval_max_125us = 9U;   /* 1125 us, ECV */
+		err = bt_conn_le_conn_rate_set_defaults(&ecv_def);
+		if (err) {
+			FAIL("ECV default rate params rejected (err %d)\n", err);
+			return;
+		}
+
+		ecv_def.interval_min_125us = 4U;   /* 500 us, below the 625 us floor */
+		ecv_def.interval_max_125us = 4U;
+		err = bt_conn_le_conn_rate_set_defaults(&ecv_def);
+		if (err == 0) {
+			FAIL("Below-floor default rate params accepted\n");
+			return;
+		}
+		printk("Set Default Rate Parameters: ECV accepted, below-floor rejected\n");
+	}
+
 	/* Interval enforcement: sub-floor and tier-straddle intervals the host range
 	 * check (floor 375 us) lets through must be rejected by the controller. The
 	 * controller's ECV floor is configurable (BT_CTLR_SCI_ECV_INTERVAL_MIN_125US,
