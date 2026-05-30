@@ -1813,6 +1813,93 @@ static void test_central_tick(bs_time_t HW_device_time)
 	}
 }
 
+/* Connection Rate Update (instant) colliding with a peer Connection Update
+ * (instant). The Central drives a 1.25 ms rate update at the same uptime the
+ * Peripheral drives a Connection Parameters Request; the instant arbiter must
+ * serialise the two. A desync would drop the link within supervision, so
+ * survival + a settled interval is the correctness check.
+ */
+static void test_central_main_sci_collision(void)
+{
+	struct bt_conn_le_conn_rate_param rate = {
+		.interval_min_125us = 10U,   /* 1250 us (RCV) */
+		.interval_max_125us = 10U,
+		.subrate_min = 1U,
+		.subrate_max = 1U,
+		.max_latency = 0U,
+		.continuation_number = 0U,
+		.supervision_timeout_10ms = CONN_TIMEOUT_UNITS,
+		.min_ce_len_125us = 1U,
+		.max_ce_len_125us = 1U,
+	};
+	struct bt_conn_info info;
+	uint32_t iv1;
+	int err;
+
+	bt_conn_cb_register(&sci_conn_callbacks);
+
+	err = bt_enable(NULL);
+	if (err) {
+		FAIL("Bluetooth init failed (err %d)\n", err);
+		return;
+	}
+
+	err = bt_le_scan_start(BT_LE_SCAN_ACTIVE, device_found);
+	if (err) {
+		FAIL("Scanning failed to start (err %d)\n", err);
+		return;
+	}
+	SUBRATE_WAIT(central_connected && default_conn);
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	/* Feature page 1 must be exchanged before a Connection Rate Update. */
+	efs_complete = false;
+	err = bt_conn_le_read_all_remote_features(default_conn, 1U);
+	if (err) {
+		FAIL("Central read-all-remote-features failed (err %d)\n", err);
+		return;
+	}
+	SUBRATE_WAIT(efs_complete);
+
+	while (k_uptime_get() < COLLISION_TIME_MS) {
+		k_sleep(K_MSEC(20));
+		if (bst_result == Failed) {
+			return;
+		}
+	}
+	collision_mode = true;
+	(void)bt_conn_le_conn_rate_request(default_conn, &rate);
+
+	k_sleep(K_MSEC(3000));
+	if (!central_connected || !default_conn) {
+		FAIL("Central lost the link after the SCI/conn-update collision\n");
+		return;
+	}
+
+	/* Survival across supervision proves the two instants did not desync; a
+	 * settled interval (two reads agree) proves it is not still oscillating.
+	 */
+	if (bt_conn_get_info(default_conn, &info)) {
+		FAIL("bt_conn_get_info failed after collision\n");
+		return;
+	}
+	iv1 = info.le.interval_us;
+	k_sleep(K_MSEC(500));
+	if (bt_conn_get_info(default_conn, &info)) {
+		FAIL("bt_conn_get_info (2nd) failed after collision\n");
+		return;
+	}
+	if (iv1 == 0U || info.le.interval_us != iv1) {
+		FAIL("Interval not settled after collision: %u then %u us\n",
+		     iv1, info.le.interval_us);
+		return;
+	}
+	printk("Central post-collision interval settled at %u us\n", iv1);
+
+	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	PASS("Central survived SCI/conn-update collision (interval %u us)\n", iv1);
+}
+
 static const struct bst_test_instance test_central[] = {
 	{
 		.test_id = "central",
@@ -1959,6 +2046,15 @@ static const struct bst_test_instance test_central[] = {
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_sci_coex,
+	},
+	{
+		.test_id = "central_sci_collision",
+		.test_descr = "Central: a Connection Rate Update collides with a peer "
+			      "Connection Update (two instants at the same uptime); the "
+			      "arbiter serialises them, the link survives and settles.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_sci_collision,
 	},
 	{
 		.test_id = "central_ecv_coex",
