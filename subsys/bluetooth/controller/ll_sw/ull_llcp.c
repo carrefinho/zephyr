@@ -451,13 +451,14 @@ uint8_t ll_conn_rate_defaults_set(uint16_t interval_min_125us, uint16_t interval
 				  uint16_t subrate_min, uint16_t subrate_max, uint16_t max_latency,
 				  uint16_t continuation_number, uint16_t supervision_timeout)
 {
-	/* Validate the RCV grid at store time so a stored default cannot later seed
-	 * an ECV Connection Rate Request (one of the three enforcement sites, with
-	 * the PDU codec and ll_conn_rate_req_send). Intervals are 125 us units.
+	/* Validate against what this controller supports: any interval from the
+	 * configured ECV floor (BT_CTLR_SCI_ECV_INTERVAL_MIN_125US; = the RCV floor
+	 * 0x000A when ECV is tuned off) up to 0x7D00, in 125 us units. An ECV
+	 * controller must accept an ECV default here rather than reject it as the
+	 * earlier RCV-only (multiple-of-10) gate did.
 	 */
-	if ((interval_min_125us % 10U) != 0U || (interval_max_125us % 10U) != 0U ||
-	    (interval_min_125us < 0x000AU) || (interval_max_125us > 0x7D00U) ||
-	    (interval_max_125us < interval_min_125us)) {
+	if ((interval_min_125us < CONFIG_BT_CTLR_SCI_ECV_INTERVAL_MIN_125US) ||
+	    (interval_max_125us > 0x7D00U) || (interval_max_125us < interval_min_125us)) {
 		return BT_HCI_ERR_INVALID_PARAM;
 	}
 
@@ -467,8 +468,12 @@ uint8_t ll_conn_rate_defaults_set(uint16_t interval_min_125us, uint16_t interval
 		return BT_HCI_ERR_INVALID_PARAM;
 	}
 
-	conn_rate_defaults.interval_min = interval_min_125us / 10U;
-	conn_rate_defaults.interval_max = interval_max_125us / 10U;
+	/* Stored in canonical 125 us units (not the RCV 1.25 ms units) so an ECV
+	 * default survives round-trip. Currently write-only -- reserved for seeding
+	 * an autonomous Connection Rate Request, which no path issues yet.
+	 */
+	conn_rate_defaults.interval_min = interval_min_125us;
+	conn_rate_defaults.interval_max = interval_max_125us;
 	conn_rate_defaults.subrate_min = subrate_min;
 	conn_rate_defaults.subrate_max = subrate_max;
 	conn_rate_defaults.max_latency = max_latency;

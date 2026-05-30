@@ -998,8 +998,15 @@ uint8_t ll_apto_set(uint16_t handle, uint16_t apto)
 		return BT_HCI_ERR_UNKNOWN_CONN_ID;
 	}
 
-	conn->apto_reload = RADIO_CONN_EVENTS(apto * 10U * USEC_PER_MSEC,
-					      conn_interval_us_get(&conn->lll));
+	uint32_t apto_reload = DIV_ROUND_UP((uint32_t)apto * 10U * USEC_PER_MSEC,
+					    conn_interval_us_get(&conn->lll));
+
+	/* apto_reload is a 16-bit event count. A large APTO on a small ECV interval
+	 * (e.g. >= ~24.5 s at 375 us) overflows it -- RADIO_CONN_EVENTS' uint16 cast
+	 * would truncate to a tiny reload, firing LE Ping continuously. Clamp so the
+	 * effective APTO saturates (slightly early ping) instead of collapsing.
+	 */
+	conn->apto_reload = (apto_reload > UINT16_MAX) ? UINT16_MAX : (uint16_t)apto_reload;
 
 	return 0;
 }
@@ -2922,8 +2929,10 @@ void ull_conn_update_parameters(struct ll_conn *conn, uint8_t is_cu_proc, uint8_
 
 		/* Use requested window size for anchor point at instant, until successful sync.
 		 * WinSize/WinOffset are in 1.25 ms units per spec regardless of the
-		 * interval tier, so keep CONN_INT_UNIT_US here. (ECV WinSize semantics
-		 * are revisited with the conn_rate IND field units + a test.)
+		 * interval tier, so keep CONN_INT_UNIT_US here on an ECV link too. The
+		 * Connection Rate IND carries no transmit window; a Connection Update on
+		 * an ECV link (which can only target the 1.25 ms grid) still uses the
+		 * 1.25 ms-unit window unchanged.
 		 */
 		lll->periph.window_size_prepare_us = win_size * CONN_INT_UNIT_US;
 
