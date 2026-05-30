@@ -100,6 +100,9 @@ static bool proc_with_instant(struct proc_ctx *ctx)
 #if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
 	case PROC_FEATURE_PAGE_EXCHANGE:
 #endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+	case PROC_FRAME_SPACE_UPDATE:
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
 		return 0U;
 	case PROC_PHY_UPDATE:
 	case PROC_CONN_UPDATE:
@@ -339,6 +342,11 @@ void llcp_rr_rx(struct ll_conn *conn, struct proc_ctx *ctx, memq_link_t *link,
 		llcp_rp_conn_rate_rx(conn, ctx, rx);
 		break;
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+	case PROC_FRAME_SPACE_UPDATE:
+		llcp_rp_frame_space_rx(conn, ctx, rx);
+		break;
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
 	default:
 		/* Unknown procedure */
 		LL_ASSERT(0);
@@ -386,6 +394,11 @@ void llcp_rr_tx_ack(struct ll_conn *conn, struct proc_ctx *ctx, struct node_tx *
 		llcp_rp_conn_rate_tx_ack(conn, ctx, tx);
 		break;
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+	case PROC_FRAME_SPACE_UPDATE:
+		llcp_rp_frame_space_tx_ack(conn, ctx, tx);
+		break;
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
 	default:
 		/* Ignore tx_ack */
 		break;
@@ -504,6 +517,11 @@ static void rr_act_run(struct ll_conn *conn)
 		llcp_rp_conn_rate_run(conn, ctx, NULL);
 		break;
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+	case PROC_FRAME_SPACE_UPDATE:
+		llcp_rp_frame_space_run(conn, ctx, NULL);
+		break;
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
 	default:
 		/* Unknown procedure */
 		LL_ASSERT(0);
@@ -986,6 +1004,12 @@ static const struct proc_role new_proc_lut[] = {
 	/* Central updates via LL_CONNECTION_RATE_IND; only a Peripheral accepts it (5.1.32) */
 	[PDU_DATA_LLCTRL_TYPE_CONN_RATE_IND] = { PROC_CONN_RATE_UPDATE, ACCEPT_ROLE_PERIPHERAL },
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+	/* Frame Space Update is symmetric: either role may send LL_FRAME_SPACE_REQ
+	 * and either role accepts it (Core 6.2 5.1.30).
+	 */
+	[PDU_DATA_LLCTRL_TYPE_FRAME_SPACE_REQ] = { PROC_FRAME_SPACE_UPDATE, ACCEPT_ROLE_BOTH },
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
 };
 
 void llcp_rr_new(struct ll_conn *conn, memq_link_t *link, struct node_rx_pdu *rx, bool valid_pdu)

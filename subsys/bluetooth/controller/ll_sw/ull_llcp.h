@@ -156,6 +156,14 @@ uint8_t ull_cp_conn_rate_req(struct ll_conn *conn, uint16_t interval_min, uint16
 			     uint16_t continuation_number, uint16_t timeout, bool is_ecv);
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+/**
+ * @brief Initiate a Frame Space Update procedure (Core 6.2 Section 5.1.30).
+ */
+uint8_t ull_cp_frame_space_update(struct ll_conn *conn, uint16_t fs_min, uint16_t fs_max,
+				  uint8_t phys, uint16_t spacing_types);
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
+
 /**
  * @brief Accept the remote device’s request to change connection parameters.
  */

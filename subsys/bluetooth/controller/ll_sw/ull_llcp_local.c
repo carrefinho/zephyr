@@ -339,6 +339,11 @@ void llcp_lr_rx(struct ll_conn *conn, struct proc_ctx *ctx, memq_link_t *link,
 		llcp_lp_conn_rate_rx(conn, ctx, rx);
 		break;
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+	case PROC_FRAME_SPACE_UPDATE:
+		llcp_lp_frame_space_rx(conn, ctx, rx);
+		break;
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
 	default:
 		/* Unknown procedure */
 		LL_ASSERT(0);
@@ -513,6 +518,11 @@ static void lr_act_run(struct ll_conn *conn)
 		llcp_lp_conn_rate_run(conn, ctx, NULL);
 		break;
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+	case PROC_FRAME_SPACE_UPDATE:
+		llcp_lp_frame_space_run(conn, ctx, NULL);
+		break;
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
 	default:
 		/* Unknown procedure */
 		LL_ASSERT(0);

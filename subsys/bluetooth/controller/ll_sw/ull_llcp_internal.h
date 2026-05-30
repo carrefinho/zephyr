@@ -37,6 +37,9 @@ enum llcp_proc {
 #if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
 	PROC_CONN_RATE_UPDATE,
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+	PROC_FRAME_SPACE_UPDATE,
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
 	/* A helper enum entry, to use in pause procedure context */
 	PROC_NONE = 0x0,
 };
@@ -871,6 +874,15 @@ void llcp_pdu_encode_frame_space_req(struct proc_ctx *ctx, struct pdu_data *pdu)
 void llcp_pdu_decode_frame_space_req(struct proc_ctx *ctx, struct pdu_data *pdu);
 void llcp_pdu_encode_frame_space_rsp(struct proc_ctx *ctx, struct pdu_data *pdu);
 void llcp_pdu_decode_frame_space_rsp(struct proc_ctx *ctx, struct pdu_data *pdu);
+
+void llcp_lp_frame_space_init_proc(struct proc_ctx *ctx);
+void llcp_lp_frame_space_run(struct ll_conn *conn, struct proc_ctx *ctx, void *param);
+void llcp_lp_frame_space_rx(struct ll_conn *conn, struct proc_ctx *ctx, struct node_rx_pdu *rx);
+
+void llcp_rp_frame_space_init_proc(struct proc_ctx *ctx);
+void llcp_rp_frame_space_run(struct ll_conn *conn, struct proc_ctx *ctx, void *param);
+void llcp_rp_frame_space_rx(struct ll_conn *conn, struct proc_ctx *ctx, struct node_rx_pdu *rx);
+void llcp_rp_frame_space_tx_ack(struct ll_conn *conn, struct proc_ctx *ctx, struct node_tx *tx);
 #endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
 
 /*

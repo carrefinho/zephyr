@@ -1239,6 +1239,39 @@ uint8_t ull_cp_conn_rate_req(struct ll_conn *conn, uint16_t interval_min, uint16
 }
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+uint8_t ull_cp_frame_space_update(struct ll_conn *conn, uint16_t fs_min, uint16_t fs_max,
+				  uint8_t phys, uint16_t spacing_types)
+{
+	struct proc_ctx *ctx;
+
+	/* The peer must support Frame Space Update (feature bit 65, page 1). It is
+	 * not host-gated (Host-Controlled = N), so a single peer-feature check
+	 * suffices; this requires the Extended Feature Set page exchange to have
+	 * completed (ext_valid).
+	 */
+	if (!feature_peer_frame_space_update(conn)) {
+		return BT_HCI_ERR_UNSUPP_REMOTE_FEATURE;
+	}
+
+	ctx = llcp_create_local_procedure(PROC_FRAME_SPACE_UPDATE);
+	if (!ctx) {
+		return BT_HCI_ERR_CMD_DISALLOWED;
+	}
+
+	ctx->data.frame_space.fs_min = fs_min;
+	ctx->data.frame_space.fs_max = fs_max;
+	ctx->data.frame_space.phys = phys;
+	ctx->data.frame_space.spacing_types = spacing_types;
+	ctx->data.frame_space.initiator = BT_HCI_LE_FRAME_SPACE_UPDATE_INITIATOR_LOCAL_HOST;
+	ctx->data.frame_space.error = BT_HCI_ERR_SUCCESS;
+
+	llcp_lr_enqueue(conn, ctx);
+
+	return BT_HCI_ERR_SUCCESS;
+}
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
+
 #if defined(CONFIG_BT_CTLR_SYNC_TRANSFER_SENDER)
 uint8_t ull_cp_periodic_sync(struct ll_conn *conn, struct ll_sync_set *sync,
 			     struct ll_adv_sync_set *adv_sync, uint16_t service_data)

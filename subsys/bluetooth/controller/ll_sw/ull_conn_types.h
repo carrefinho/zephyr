@@ -366,6 +366,19 @@ struct node_rx_conn_rate_change {
 };
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+/* Carrier for the LE Frame Space Update Complete meta-event (subevent 0x35).
+ * frame_space is the negotiated inter-frame space in microseconds.
+ */
+struct node_rx_frame_space_update_complete {
+	uint8_t  status;
+	uint8_t  initiator;
+	uint16_t frame_space;
+	uint8_t  phys;
+	uint16_t spacing_types;
+};
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
+
 #if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
 /* Compact controller-internal carrier for the LE Read All Remote Features
  * Complete meta-event. Only the pages we actually exchange are stored here
