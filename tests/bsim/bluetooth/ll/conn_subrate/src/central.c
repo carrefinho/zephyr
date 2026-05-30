@@ -1445,15 +1445,14 @@ static void test_central_main_sci(void)
 		}
 	}
 
-	/* RCV grid enforcement: off-grid intervals (ECV / sub-floor / straddle) the
-	 * host range check (floor 375 us) lets through must be rejected by the
-	 * controller, so the request returns an error and the link is untouched.
+	/* Interval enforcement: sub-floor and tier-straddle intervals the host range
+	 * check (floor 375 us) lets through must be rejected by the controller. (A
+	 * valid ECV interval such as {9,9} = 1125 us is now ACCEPTED -- tested below.)
 	 */
 	{
 		static const uint16_t bad_125us[][2] = {
-			{9U, 9U},    /* 1125 us, sub-floor ECV */
-			{11U, 11U},  /* 1375 us, ECV */
-			{8U, 10U},   /* straddle: min off-grid */
+			{2U, 2U},    /* 250 us, below the 375 us ECV floor */
+			{8U, 10U},   /* straddle: 8 (ECV) with 10 (RCV) */
 		};
 
 		for (i = 0; i < (int)ARRAY_SIZE(bad_125us); i++) {
@@ -1463,25 +1462,56 @@ static void test_central_main_sci(void)
 			bad.interval_max_125us = bad_125us[i][1];
 			err = bt_conn_le_conn_rate_request(default_conn, &bad);
 			if (err == 0) {
-				FAIL("Off-grid interval {%u,%u} (125us) was accepted, "
+				FAIL("Invalid interval {%u,%u} (125us) was accepted, "
 				     "expected reject\n", bad_125us[i][0], bad_125us[i][1]);
 				return;
 			}
-			printk("Off-grid interval {%u,%u} correctly rejected (err %d)\n",
+			printk("Invalid interval {%u,%u} correctly rejected (err %d)\n",
 			       bad_125us[i][0], bad_125us[i][1], err);
 		}
 	}
 
-	/* Hold the 1.25 ms link to confirm both ends stay anchored (no supervision
-	 * timeout / desync after the instant).
+	/* ECV: a 125 us-granular sub-1.25 ms interval (625 us = 5 x 125 us, not a
+	 * multiple of 1.25 ms) must be accepted and applied -- the controller is the
+	 * sole gate (the host floor is 375 us).
+	 */
+	{
+		struct bt_conn_le_conn_rate_param ecv = param;
+
+		ecv.interval_min_125us = 5U;   /* 625 us */
+		ecv.interval_max_125us = 5U;
+		sci_changed = false;
+		err = bt_conn_le_conn_rate_request(default_conn, &ecv);
+		if (err) {
+			FAIL("ECV 625 us request rejected (err %d)\n", err);
+			return;
+		}
+		SUBRATE_WAIT(sci_changed);
+		if (sci_status != BT_HCI_ERR_SUCCESS) {
+			FAIL("ECV 625 us change failed (status 0x%02x)\n", sci_status);
+			return;
+		}
+		err = bt_conn_get_info(default_conn, &info);
+		if (err || info.le.interval_us != 625U) {
+			FAIL("ECV interval after change = %u us, expected 625\n",
+			     info.le.interval_us);
+			return;
+		}
+		printk("ECV: 625 us interval applied (interval_us = %u)\n",
+		       info.le.interval_us);
+	}
+
+	/* Hold the ECV 625 us link to confirm both ends stay anchored (no
+	 * supervision timeout / desync after the instant).
 	 */
 	k_sleep(K_MSEC(2000));
 	if (!central_connected || !default_conn) {
-		FAIL("1.25 ms link dropped after the connection rate update\n");
+		FAIL("ECV 625 us link dropped after the connection rate update\n");
 		return;
 	}
 
-	PASS("Central SCI test passed: 1.25 ms link, low-latency reads, off-grid rejected\n");
+	PASS("Central SCI test passed: RCV 1.25 ms + ECV 625 us, low-latency reads, "
+	     "invalid intervals rejected\n");
 }
 
 /* RCV Shorter Connection Intervals fused with subrating (factor > 1). Exercises

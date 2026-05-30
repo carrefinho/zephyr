@@ -1187,7 +1187,7 @@ uint8_t ull_cp_subrate_req(struct ll_conn *conn, uint16_t subrate_min, uint16_t 
 #if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
 uint8_t ull_cp_conn_rate_req(struct ll_conn *conn, uint16_t interval_min, uint16_t interval_max,
 			     uint16_t subrate_min, uint16_t subrate_max, uint16_t max_latency,
-			     uint16_t continuation_number, uint16_t timeout)
+			     uint16_t continuation_number, uint16_t timeout, bool is_ecv)
 {
 	struct proc_ctx *ctx;
 
@@ -1214,11 +1214,13 @@ uint8_t ull_cp_conn_rate_req(struct ll_conn *conn, uint16_t interval_min, uint16
 		return BT_HCI_ERR_CMD_DISALLOWED;
 	}
 
-	/* interval_min/max are in internal 1.25 ms units (the HCI layer applied
-	 * the RCV /10 conversion and grid check before calling).
+	/* interval_min/max are in the tier-native internal units the HCI layer
+	 * produced: 1.25 ms units for RCV (the /10 conversion was applied), or 125 us
+	 * units for ECV (stored as-is). is_ecv selects between them.
 	 */
 	ctx->data.conn_rate.interval_min = interval_min;
 	ctx->data.conn_rate.interval_max = interval_max;
+	ctx->data.conn_rate.ecv = is_ecv;
 	ctx->data.conn_rate.subrate_factor_min = subrate_min;
 	ctx->data.conn_rate.subrate_factor_max = subrate_max;
 	ctx->data.conn_rate.max_latency = max_latency;
