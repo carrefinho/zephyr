@@ -26,6 +26,7 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/services/hrs.h>
+#include <zephyr/sys/byteorder.h>
 
 #include "conn_subrate.h"
 
@@ -81,6 +82,21 @@ BT_GATT_SERVICE_DEFINE(cwrite_svc,
 	BT_GATT_CHARACTERISTIC(BT_UUID_DECLARE_128(CWRITE_CHR_UUID),
 			       BT_GATT_CHRC_WRITE_WITHOUT_RESP, BT_GATT_PERM_WRITE,
 			       NULL, cwrite_cb, NULL));
+
+/* Notify characteristic carrying the peripheral's send timestamp (uint32 us)
+ * for the one-way latency test. attrs[2] is the value attribute.
+ */
+static void lat_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
+{
+	ARG_UNUSED(attr);
+	ARG_UNUSED(value);
+}
+
+BT_GATT_SERVICE_DEFINE(lat_svc,
+	BT_GATT_PRIMARY_SERVICE(BT_UUID_DECLARE_128(LAT_SVC_UUID)),
+	BT_GATT_CHARACTERISTIC(BT_UUID_DECLARE_128(LAT_CHR_UUID),
+			       BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_NONE, NULL, NULL, NULL),
+	BT_GATT_CCC(lat_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE));
 
 static void subrate_changed(struct bt_conn *conn,
 			    const struct bt_conn_le_subrate_changed *params)
@@ -370,6 +386,35 @@ static void test_peripheral_main_sci_collision(void)
 	PASS("Peripheral survived SCI/conn-update collision\n");
 }
 
+/* Peer side of central_sci_latency: stream the send timestamp on the latency
+ * characteristic. The Central drives the SCI rate, subscribes, and measures the
+ * one-way delay. Notifications before the Central subscribes simply no-op.
+ */
+static void test_peripheral_main_sci_latency(void)
+{
+	if (peripheral_setup()) {
+		return;
+	}
+
+	while (!connected_flag) {
+		k_sleep(K_MSEC(50));
+		if (bst_result == Failed) {
+			return;
+		}
+	}
+
+	for (int i = 0; i < 400 && connected_flag; i++) {
+		uint32_t sent_us = (uint32_t)k_ticks_to_us_floor64(k_uptime_ticks());
+		uint8_t buf[sizeof(sent_us)];
+
+		sys_put_le32(sent_us, buf);
+		(void)bt_gatt_notify(default_conn, &lat_svc.attrs[2], buf, sizeof(buf));
+		k_sleep(K_MSEC(LAT_NOTIFY_GAP_MS));
+	}
+
+	PASS("Peripheral streamed latency notifications\n");
+}
+
 static void test_peripheral_main_notify(void)
 {
 	uint16_t heartrate = 90U;
@@ -461,6 +506,14 @@ static const struct bst_test_instance test_peripheral[] = {
 		.test_pre_init_f = test_peripheral_init,
 		.test_tick_f = test_peripheral_tick,
 		.test_main_f = test_peripheral_main_sci_collision,
+	},
+	{
+		.test_id = "peripheral_sci_latency",
+		.test_descr = "Peripheral: streams send-timestamp notifications for the "
+			      "Central's one-way latency measurement.",
+		.test_pre_init_f = test_peripheral_init,
+		.test_tick_f = test_peripheral_tick,
+		.test_main_f = test_peripheral_main_sci_latency,
 	},
 	{
 		.test_id = "peripheral_notify",
