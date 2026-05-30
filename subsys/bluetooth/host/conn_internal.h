@@ -503,6 +503,9 @@ void notify_read_all_remote_feat_complete(struct bt_conn *conn,
 void bt_conn_notify_conn_rate_change(struct bt_conn *conn, uint8_t status,
 				     const struct bt_conn_le_conn_rate_changed *params);
 
+void bt_conn_notify_frame_space_update(struct bt_conn *conn, uint8_t status,
+				       const struct bt_conn_le_frame_space_info *params);
+
 void notify_remote_cs_capabilities(struct bt_conn *conn,
 			   struct bt_conn_le_cs_capabilities params);
 

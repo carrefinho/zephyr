@@ -411,6 +411,36 @@ struct bt_conn_le_conn_rate_changed {
 	uint16_t supervision_timeout_10ms;
 };
 
+/** @brief Frame Space Update request parameters (Core 6.2) */
+struct bt_conn_le_frame_space_param {
+	/** Minimum frame space requested, microseconds (0 - 10000) */
+	uint16_t frame_space_min;
+	/** Maximum frame space requested, microseconds (>= min, 0 - 10000) */
+	uint16_t frame_space_max;
+	/** PHYs the request applies to
+	 *  (BT_HCI_LE_FRAME_SPACE_UPDATE_PHY_*_MASK; at least one bit set)
+	 */
+	uint8_t phys;
+	/** Frame space types the request applies to
+	 *  (BT_HCI_LE_FRAME_SPACE_UPDATE_SPACING_TYPE_*_MASK; at least one bit set)
+	 */
+	uint16_t spacing_types;
+};
+
+/** @brief Frame Space Update complete callback parameters */
+struct bt_conn_le_frame_space_info {
+	/** Who initiated the procedure
+	 *  (BT_HCI_LE_FRAME_SPACE_UPDATE_INITIATOR_*)
+	 */
+	uint8_t initiator;
+	/** Negotiated frame space now in use, microseconds */
+	uint16_t frame_space;
+	/** PHYs the change applies to */
+	uint8_t phys;
+	/** Frame space types the change applies to */
+	uint16_t spacing_types;
+};
+
 /** Read all remote features complete callback params */
 struct bt_conn_le_read_all_remote_feat_complete {
 	/** @brief  HCI Status from LE Read All Remote Features Complete event.
@@ -1456,6 +1486,19 @@ int bt_conn_le_conn_rate_set_defaults(const struct bt_conn_le_conn_rate_param *p
 int bt_conn_le_conn_rate_request(struct bt_conn *conn,
 				 const struct bt_conn_le_conn_rate_param *params);
 
+/** @brief Request a Frame Space Update (Core 6.2 Vol 6 Part B 5.1.30).
+ *
+ *  Negotiate a new inter-frame space with the peer. Completion is reported via
+ *  the @ref bt_conn_cb.frame_space_updated callback.
+ *
+ *  @param conn   Connection object.
+ *  @param params Frame Space Update parameters.
+ *
+ *  @return Zero on success or (negative) error code on failure.
+ */
+int bt_conn_le_frame_space_update(struct bt_conn *conn,
+				  const struct bt_conn_le_frame_space_param *params);
+
 /** @brief Read remote feature pages.
  *
  *  Request remote feature pages, from 0 up to pages_requested or the number
@@ -2189,6 +2232,17 @@ struct bt_conn_cb {
 	void (*conn_rate_changed)(struct bt_conn *conn, uint8_t status,
 				  const struct bt_conn_le_conn_rate_changed *params);
 #endif /* CONFIG_BT_SHORTER_CONNECTION_INTERVALS */
+
+#if defined(CONFIG_BT_FRAME_SPACE_UPDATE)
+	/** @brief The Frame Space Update procedure completed.
+	 *
+	 *  @param conn   Connection object.
+	 *  @param status HCI status. @p params is NULL if not BT_HCI_ERR_SUCCESS.
+	 *  @param params Negotiated frame space info.
+	 */
+	void (*frame_space_updated)(struct bt_conn *conn, uint8_t status,
+				    const struct bt_conn_le_frame_space_info *params);
+#endif /* CONFIG_BT_FRAME_SPACE_UPDATE */
 
 #if defined(CONFIG_BT_LE_EXTENDED_FEAT_SET)
 	/** @brief Read all remote features complete event.

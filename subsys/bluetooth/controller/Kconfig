@@ -1211,6 +1211,7 @@ config BT_CTLR_FRAME_SPACE_UPDATE
 	depends on BT_CTLR_FRAME_SPACE_UPDATE_SUPPORT
 	depends on BT_CTLR_EXTENDED_FEAT_SET
 	select BT_CTLR_EXT_REJ_IND
+	default y if BT_FRAME_SPACE_UPDATE
 	help
 	  Enable support for Bluetooth 6.2 Frame Space Update (LL feature bit 65)
 	  in the controller: negotiate a shorter (or longer) inter-frame space

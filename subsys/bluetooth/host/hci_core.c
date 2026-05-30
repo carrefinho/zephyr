@@ -2787,6 +2787,36 @@ void bt_hci_le_conn_rate_change_event(struct net_buf *buf)
 }
 #endif /* CONFIG_BT_SHORTER_CONNECTION_INTERVALS */
 
+#if defined(CONFIG_BT_FRAME_SPACE_UPDATE)
+void bt_hci_le_frame_space_update_complete_event(struct net_buf *buf)
+{
+	struct bt_hci_evt_le_frame_space_update_complete *evt;
+	struct bt_conn_le_frame_space_info params;
+	struct bt_conn *conn;
+
+	evt = net_buf_pull_mem(buf, sizeof(*evt));
+
+	conn = bt_conn_lookup_handle(sys_le16_to_cpu(evt->handle), BT_CONN_TYPE_LE);
+	if (conn == NULL) {
+		LOG_ERR("Unknown conn handle 0x%04X for frame space update event",
+			sys_le16_to_cpu(evt->handle));
+		return;
+	}
+
+	if (evt->status == BT_HCI_ERR_SUCCESS) {
+		params.initiator = evt->initiator;
+		params.frame_space = sys_le16_to_cpu(evt->frame_space);
+		params.phys = evt->phys;
+		params.spacing_types = sys_le16_to_cpu(evt->spacing_types);
+		bt_conn_notify_frame_space_update(conn, evt->status, &params);
+	} else {
+		bt_conn_notify_frame_space_update(conn, evt->status, NULL);
+	}
+
+	bt_conn_unref(conn);
+}
+#endif /* CONFIG_BT_FRAME_SPACE_UPDATE */
+
 static const struct event_handler vs_events[] = {
 #if defined(CONFIG_BT_DF_VS_CL_IQ_REPORT_16_BITS_IQ_SAMPLES)
 	EVENT_HANDLER(BT_HCI_EVT_VS_LE_CONNECTIONLESS_IQ_REPORT,
@@ -2942,6 +2972,11 @@ static const struct event_handler meta_events[] = {
 	EVENT_HANDLER(BT_HCI_EVT_LE_CONN_RATE_CHANGE, bt_hci_le_conn_rate_change_event,
 		      sizeof(struct bt_hci_evt_le_conn_rate_change)),
 #endif /* CONFIG_BT_SHORTER_CONNECTION_INTERVALS */
+#if defined(CONFIG_BT_FRAME_SPACE_UPDATE)
+	EVENT_HANDLER(BT_HCI_EVT_LE_FRAME_SPACE_UPDATE_COMPLETE,
+		      bt_hci_le_frame_space_update_complete_event,
+		      sizeof(struct bt_hci_evt_le_frame_space_update_complete)),
+#endif /* CONFIG_BT_FRAME_SPACE_UPDATE */
 #if defined(CONFIG_BT_PER_ADV_SYNC_RSP)
 	EVENT_HANDLER(BT_HCI_EVT_LE_PER_ADVERTISING_REPORT_V2, bt_hci_le_per_adv_report_v2,
 		      sizeof(struct bt_hci_evt_le_per_advertising_report_v2)),
@@ -3536,6 +3571,11 @@ static int le_set_event_mask(void)
 		if (IS_ENABLED(CONFIG_BT_SHORTER_CONNECTION_INTERVALS) &&
 		    BT_FEAT_LE_SHORTER_CONN_INTERVALS(bt_dev.le.features_ext)) {
 			mask |= BT_EVT_MASK_LE_CONN_RATE_CHANGE;
+		}
+
+		if (IS_ENABLED(CONFIG_BT_FRAME_SPACE_UPDATE) &&
+		    BT_FEAT_LE_FRAME_SPACE_UPDATE_SET(bt_dev.le.features_ext)) {
+			mask |= BT_EVT_MASK_LE_FRAME_SPACE_UPDATE_COMPLETE;
 		}
 
 		if (IS_ENABLED(CONFIG_BT_LE_EXTENDED_FEAT_SET) &&

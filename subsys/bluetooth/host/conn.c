@@ -3335,6 +3335,26 @@ void bt_conn_notify_conn_rate_change(struct bt_conn *conn, uint8_t status,
 }
 #endif /* CONFIG_BT_SHORTER_CONNECTION_INTERVALS */
 
+#if defined(CONFIG_BT_FRAME_SPACE_UPDATE)
+void bt_conn_notify_frame_space_update(struct bt_conn *conn, uint8_t status,
+				       const struct bt_conn_le_frame_space_info *params)
+{
+	struct bt_conn_cb *callback;
+
+	SYS_SLIST_FOR_EACH_CONTAINER(&conn_cbs, callback, _node) {
+		if (callback->frame_space_updated != NULL) {
+			callback->frame_space_updated(conn, status, params);
+		}
+	}
+
+	STRUCT_SECTION_FOREACH(bt_conn_cb, cb) {
+		if (cb->frame_space_updated != NULL) {
+			cb->frame_space_updated(conn, status, params);
+		}
+	}
+}
+#endif /* CONFIG_BT_FRAME_SPACE_UPDATE */
+
 static bool le_subrate_common_params_valid(const struct bt_conn_le_subrate_param *param)
 {
 	/* All limits according to BT Core spec 5.4 [Vol 4, Part E, 7.8.123] */
@@ -3598,6 +3618,43 @@ int bt_conn_le_conn_rate_request(struct bt_conn *conn,
 	return bt_hci_cmd_send_sync(BT_HCI_OP_LE_CONNECTION_RATE_REQUEST, buf, NULL);
 }
 #endif /* CONFIG_BT_SHORTER_CONNECTION_INTERVALS */
+
+#if defined(CONFIG_BT_FRAME_SPACE_UPDATE)
+int bt_conn_le_frame_space_update(struct bt_conn *conn,
+				  const struct bt_conn_le_frame_space_param *params)
+{
+	struct bt_hci_cp_le_frame_space_update *cp;
+	struct net_buf *buf;
+
+	if (conn->type != BT_CONN_TYPE_LE) {
+		LOG_DBG("Invalid connection type: %u for %p", conn->type, conn);
+		return -EINVAL;
+	}
+
+	/* Core 6.2 7.8.151: FS_Min <= FS_Max, FS_Max <= 10 ms, at least one PHY
+	 * and one spacing type.
+	 */
+	if ((params == NULL) || (params->frame_space_min > params->frame_space_max) ||
+	    (params->frame_space_max > 10000U) || (params->phys == 0U) ||
+	    (params->spacing_types == 0U)) {
+		return -EINVAL;
+	}
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_FRAME_SPACE_UPDATE, sizeof(*cp));
+	if (buf == NULL) {
+		return -ENOBUFS;
+	}
+
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->handle = sys_cpu_to_le16(conn->handle);
+	cp->frame_space_min = sys_cpu_to_le16(params->frame_space_min);
+	cp->frame_space_max = sys_cpu_to_le16(params->frame_space_max);
+	cp->phys = params->phys;
+	cp->spacing_types = sys_cpu_to_le16(params->spacing_types);
+
+	return bt_hci_cmd_send_sync(BT_HCI_OP_LE_FRAME_SPACE_UPDATE, buf, NULL);
+}
+#endif /* CONFIG_BT_FRAME_SPACE_UPDATE */
 
 #if defined(CONFIG_BT_LE_EXTENDED_FEAT_SET)
 void notify_read_all_remote_feat_complete(struct bt_conn *conn,
