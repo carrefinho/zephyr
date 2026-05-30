@@ -1339,3 +1339,62 @@ void llcp_pdu_decode_conn_rate_ind(struct proc_ctx *ctx, struct pdu_data *pdu)
 	ctx->data.conn_rate.timeout = sys_le16_to_cpu(p->timeout);
 }
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+void llcp_pdu_encode_frame_space_req(struct proc_ctx *ctx, struct pdu_data *pdu)
+{
+	struct pdu_data_llctrl_frame_space_req *p = &pdu->llctrl.frame_space_req;
+
+	pdu->ll_id = PDU_DATA_LLID_CTRL;
+	pdu->len = PDU_DATA_LLCTRL_LEN(frame_space_req);
+	pdu->llctrl.opcode = PDU_DATA_LLCTRL_TYPE_FRAME_SPACE_REQ;
+
+	p->fs_min = sys_cpu_to_le16(ctx->data.frame_space.fs_min);
+	p->fs_max = sys_cpu_to_le16(ctx->data.frame_space.fs_max);
+	p->phys = ctx->data.frame_space.phys;
+	p->spacing_types = sys_cpu_to_le16(ctx->data.frame_space.spacing_types);
+}
+
+void llcp_pdu_decode_frame_space_req(struct proc_ctx *ctx, struct pdu_data *pdu)
+{
+	struct pdu_data_llctrl_frame_space_req *p = &pdu->llctrl.frame_space_req;
+
+	ctx->data.frame_space.error = BT_HCI_ERR_SUCCESS;
+	ctx->data.frame_space.fs_min = sys_le16_to_cpu(p->fs_min);
+	ctx->data.frame_space.fs_max = sys_le16_to_cpu(p->fs_max);
+	ctx->data.frame_space.phys = p->phys;
+	ctx->data.frame_space.spacing_types = sys_le16_to_cpu(p->spacing_types);
+
+	/* Core 6.2 Section 5.1.30: a zero PHYS or Spacing_Types field must be
+	 * rejected (LL_REJECT_EXT_IND, Invalid LL Parameters). The frame-space
+	 * selection and below-floor reject (Unsupported Feature or Parameter Value)
+	 * are applied by the procedure, which knows the controller's supported min.
+	 */
+	if ((p->phys == 0U) || (ctx->data.frame_space.spacing_types == 0U)) {
+		ctx->data.frame_space.error = BT_HCI_ERR_INVALID_LL_PARAM;
+	}
+}
+
+void llcp_pdu_encode_frame_space_rsp(struct proc_ctx *ctx, struct pdu_data *pdu)
+{
+	struct pdu_data_llctrl_frame_space_rsp *p = &pdu->llctrl.frame_space_rsp;
+
+	pdu->ll_id = PDU_DATA_LLID_CTRL;
+	pdu->len = PDU_DATA_LLCTRL_LEN(frame_space_rsp);
+	pdu->llctrl.opcode = PDU_DATA_LLCTRL_TYPE_FRAME_SPACE_RSP;
+
+	p->fs = sys_cpu_to_le16(ctx->data.frame_space.frame_space);
+	p->phys = ctx->data.frame_space.phys;
+	p->spacing_types = sys_cpu_to_le16(ctx->data.frame_space.spacing_types);
+}
+
+void llcp_pdu_decode_frame_space_rsp(struct proc_ctx *ctx, struct pdu_data *pdu)
+{
+	struct pdu_data_llctrl_frame_space_rsp *p = &pdu->llctrl.frame_space_rsp;
+
+	ctx->data.frame_space.error = BT_HCI_ERR_SUCCESS;
+	ctx->data.frame_space.frame_space = sys_le16_to_cpu(p->fs);
+	ctx->data.frame_space.phys = p->phys;
+	ctx->data.frame_space.spacing_types = sys_le16_to_cpu(p->spacing_types);
+}
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */

@@ -415,6 +415,28 @@ struct proc_ctx {
 			uint16_t latency;
 		} conn_rate;
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+		/* Frame Space Update procedure (Core 6.2 Section 5.1.30): renegotiate
+		 * the inter-frame space. No instant -- the responder applies before it
+		 * sends the RSP, the initiator within 6 anchors after receiving it.
+		 */
+		struct {
+			uint8_t  error;
+			uint8_t  rejected_opcode;
+			/* BT_HCI_LE_FRAME_SPACE_UPDATE_INITIATOR_* (for the Complete event) */
+			uint8_t  initiator;
+			/* PHYS bitmask (Table 2.23) the (req)/rsp applies to */
+			uint8_t  phys;
+			/* Spacing_Types bitmask (Table 2.41) the (req)/rsp applies to */
+			uint16_t spacing_types;
+			/* Requested range (us), from the REQ / HCI */
+			uint16_t fs_min;
+			uint16_t fs_max;
+			/* Negotiated/selected frame space (us), carried in the RSP */
+			uint16_t frame_space;
+		} frame_space;
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
 	} data;
 
 	struct {
@@ -840,6 +862,16 @@ void llcp_rp_conn_rate_run(struct ll_conn *conn, struct proc_ctx *ctx, void *par
 void llcp_rp_conn_rate_rx(struct ll_conn *conn, struct proc_ctx *ctx, struct node_rx_pdu *rx);
 void llcp_rp_conn_rate_tx_ack(struct ll_conn *conn, struct proc_ctx *ctx, struct node_tx *tx);
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+/*
+ * Frame Space Update Procedure Helper (Core 6.2 Section 5.1.30)
+ */
+void llcp_pdu_encode_frame_space_req(struct proc_ctx *ctx, struct pdu_data *pdu);
+void llcp_pdu_decode_frame_space_req(struct proc_ctx *ctx, struct pdu_data *pdu);
+void llcp_pdu_encode_frame_space_rsp(struct proc_ctx *ctx, struct pdu_data *pdu);
+void llcp_pdu_decode_frame_space_rsp(struct proc_ctx *ctx, struct pdu_data *pdu);
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
 
 /*
  * Remote Channel Map Update Procedure Helper

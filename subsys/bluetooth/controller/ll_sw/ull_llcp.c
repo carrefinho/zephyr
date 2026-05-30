@@ -2013,6 +2013,18 @@ static bool pdu_validate_conn_rate_ind(struct pdu_data *pdu)
 }
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+static bool pdu_validate_frame_space_req(struct pdu_data *pdu)
+{
+	return VALIDATE_PDU_LEN(pdu, frame_space_req);
+}
+
+static bool pdu_validate_frame_space_rsp(struct pdu_data *pdu)
+{
+	return VALIDATE_PDU_LEN(pdu, frame_space_rsp);
+}
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
+
 typedef bool (*pdu_param_validate_t)(struct pdu_data *pdu);
 
 struct pdu_validate {
@@ -2096,6 +2108,10 @@ static const struct pdu_validate pdu_validate[] = {
 	[PDU_DATA_LLCTRL_TYPE_CONN_RATE_REQ] = { pdu_validate_conn_rate_req },
 	[PDU_DATA_LLCTRL_TYPE_CONN_RATE_IND] = { pdu_validate_conn_rate_ind },
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+	[PDU_DATA_LLCTRL_TYPE_FRAME_SPACE_REQ] = { pdu_validate_frame_space_req },
+	[PDU_DATA_LLCTRL_TYPE_FRAME_SPACE_RSP] = { pdu_validate_frame_space_rsp },
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
 #if defined(CONFIG_BT_CTLR_EXTENDED_FEAT_SET)
 	[PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_REQ] = { pdu_validate_feature_ext_req },
 	[PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_RSP] = { pdu_validate_feature_ext_rsp },

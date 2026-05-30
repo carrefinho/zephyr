@@ -627,6 +627,8 @@ enum pdu_data_llctrl_type {
 	PDU_DATA_LLCTRL_TYPE_SUBRATE_IND = 0x27,
 	PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_REQ = 0x2B,
 	PDU_DATA_LLCTRL_TYPE_FEATURE_EXT_RSP = 0x2C,
+	PDU_DATA_LLCTRL_TYPE_FRAME_SPACE_REQ = 0x3B,
+	PDU_DATA_LLCTRL_TYPE_FRAME_SPACE_RSP = 0x3C,
 	PDU_DATA_LLCTRL_TYPE_CONN_RATE_REQ = 0x3E,
 	PDU_DATA_LLCTRL_TYPE_CONN_RATE_IND = 0x3F,
 	PDU_DATA_LLCTRL_TYPE_UNUSED = 0xFF
@@ -969,6 +971,27 @@ struct pdu_data_llctrl_conn_rate_ind {
 	uint16_t timeout;
 } __packed;
 
+/* LL_FRAME_SPACE_REQ, Core Spec v6.2 Vol 6, Part B, Section 2.4.2.54. FS_Min/Max
+ * in microseconds (FS_Max <= 10 ms); PHYS (Table 2.23) and Spacing_Types
+ * (Table 2.41) bitmasks. 7-octet CtrData.
+ */
+struct pdu_data_llctrl_frame_space_req {
+	uint16_t fs_min;
+	uint16_t fs_max;
+	uint8_t  phys;
+	uint16_t spacing_types;
+} __packed;
+
+/* LL_FRAME_SPACE_RSP, Core Spec v6.2 Vol 6, Part B, Section 2.4.2.55. FS is the
+ * selected frame space (us); PHYS/Spacing_Types echo the subset the response
+ * applies to (a cleared bit = that PHY/type is left unchanged). 5-octet CtrData.
+ */
+struct pdu_data_llctrl_frame_space_rsp {
+	uint16_t fs;
+	uint8_t  phys;
+	uint16_t spacing_types;
+} __packed;
+
 struct pdu_data_llctrl_periodic_sync_ind {
 	uint16_t id;
 	struct pdu_adv_sync_info sync_info;
@@ -1033,6 +1056,8 @@ struct pdu_data_llctrl {
 		struct pdu_data_llctrl_subrate_ind subrate_ind;
 		struct pdu_data_llctrl_conn_rate_req conn_rate_req;
 		struct pdu_data_llctrl_conn_rate_ind conn_rate_ind;
+		struct pdu_data_llctrl_frame_space_req frame_space_req;
+		struct pdu_data_llctrl_frame_space_rsp frame_space_rsp;
 		struct pdu_data_llctrl_periodic_sync_ind periodic_sync_ind;
 	} __packed;
 } __packed;
