@@ -109,6 +109,13 @@ jobs:
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_coex.sh
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_coex.sh
 
+      - name: Run the SCI instant-collision scenario (nRF52 bsim)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=120
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_collision.sh
+
   # Same SCI scenarios on the nRF54L15 bsim target -- the primary ZMK SoC. nRF54L
   # uses a single radio timer; the sub-7.5 ms RCV interval stresses the event
   # overhead check that the in-tree single-timer fixes (6e8f081385e/e94d9c78117,
@@ -180,6 +187,7 @@ jobs:
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_subrate.sh
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_coex.sh
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_coex.sh
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_collision.sh
 
   # Build-only check of the hardware-in-the-loop sci_latency sample for the
   # physical nRF54L15 DK (both roles), so it does not bit-rot against controller

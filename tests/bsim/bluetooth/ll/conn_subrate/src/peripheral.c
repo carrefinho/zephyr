@@ -334,6 +334,42 @@ static void test_peripheral_main_collision(void)
 	PASS("Peripheral survived subrate collision\n");
 }
 
+/* Peer side of central_sci_collision: drive a Connection Parameters Request at
+ * the same uptime the Central drives its Connection Rate Update, so two instant
+ * procedures collide. The link must survive (no instant desync).
+ */
+static void test_peripheral_main_sci_collision(void)
+{
+	struct bt_le_conn_param *upd = BT_LE_CONN_PARAM(CONN_UPDATE_INTERVAL_UNITS,
+							CONN_UPDATE_INTERVAL_UNITS,
+							0, CONN_TIMEOUT_UNITS);
+
+	if (peripheral_setup()) {
+		return;
+	}
+
+	while (!connected_flag) {
+		k_sleep(K_MSEC(50));
+		if (bst_result == Failed) {
+			return;
+		}
+	}
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	while (k_uptime_get() < COLLISION_TIME_MS) {
+		k_sleep(K_MSEC(20));
+	}
+	collision_mode = true;
+	(void)bt_conn_le_param_update(default_conn, upd);
+
+	k_sleep(K_MSEC(3000));
+	if (!connected_flag) {
+		FAIL("Peripheral lost the link after the SCI/conn-update collision\n");
+		return;
+	}
+	PASS("Peripheral survived SCI/conn-update collision\n");
+}
+
 static void test_peripheral_main_notify(void)
 {
 	uint16_t heartrate = 90U;
@@ -416,6 +452,15 @@ static const struct bst_test_instance test_peripheral[] = {
 		.test_pre_init_f = test_peripheral_init,
 		.test_tick_f = test_peripheral_tick,
 		.test_main_f = test_peripheral_main_collision,
+	},
+	{
+		.test_id = "peripheral_sci_collision",
+		.test_descr = "Peripheral: drives a Connection Parameters Request "
+			      "simultaneously with the Central's Connection Rate Update "
+			      "(two instants collide); link must survive.",
+		.test_pre_init_f = test_peripheral_init,
+		.test_tick_f = test_peripheral_tick,
+		.test_main_f = test_peripheral_main_sci_collision,
 	},
 	{
 		.test_id = "peripheral_notify",
