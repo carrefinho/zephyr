@@ -184,7 +184,8 @@ static bool __maybe_unused conn_rate_req_acceptable(struct ll_conn *conn, struct
 	/* Tier-native bounds: ECV is 125 us units [3 (375 us), 32000 (4 s)];
 	 * RCV is 1.25 ms units [1 (1250 us), 3200 (4 s)].
 	 */
-	const uint16_t interval_min_lim = is_ecv ? 3U : CONN_RATE_INTERVAL_MIN_UNITS;
+	const uint16_t interval_min_lim =
+		is_ecv ? CONFIG_BT_CTLR_SCI_ECV_INTERVAL_MIN_125US : CONN_RATE_INTERVAL_MIN_UNITS;
 	const uint16_t interval_max_lim = is_ecv ? 32000U : CONN_RATE_INTERVAL_MAX_UNITS;
 
 	ARG_UNUSED(conn);
