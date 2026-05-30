@@ -386,6 +386,12 @@ struct proc_ctx {
 			uint8_t  error;
 			uint8_t  rejected_opcode;
 			uint8_t  win_size;
+			/* This connection-rate change is an ECV (Extended Connection
+			 * Interval Values, 125 us-granular, off the 1.25 ms grid)
+			 * interval: interval_min/max/interval are then in 125 us units,
+			 * not the 1.25 ms units used by an RCV change.
+			 */
+			uint8_t  ecv:1;
 			uint16_t instant;
 			/* Requested connection-interval window (internal 1.25 ms units) */
 			uint16_t interval_min;

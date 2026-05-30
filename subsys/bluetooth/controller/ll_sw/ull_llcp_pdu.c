@@ -1193,28 +1193,42 @@ void llcp_pdu_decode_subrate_ind(struct proc_ctx *ctx, struct pdu_data *pdu)
 #endif /* CONFIG_BT_CTLR_SUBRATING */
 
 #if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
-/* RCV tier keeps the controller's internal 1.25 ms connection-interval grid:
- * intervals travel on air in 125 us units, so accept only multiples of 10
- * (1250 us) and convert by dividing by 10. The 1250 us floor (0x000A)
- * deliberately rejects the 375..1125 us ECV band that the host range check
- * (floor 375 us) lets through, so the controller is the sole RCV gate.
+/* The connection interval travels on air in 125 us units. RCV intervals are
+ * multiples of 10 (1.25 ms) and are stored internally on the 1.25 ms grid
+ * (divided by 10); ECV intervals are 125 us-granular (off the 1.25 ms grid) and
+ * are stored in 125 us units. The floor is 375 us (0x0003) for ECV and 1250 us
+ * (0x000A) for RCV; the ceiling is 4 s (0x7D00). The tier is carried per-conn so
+ * the encode side knows whether to multiply by 10 (RCV) or 1 (ECV).
  */
-#define LLCP_CONN_RATE_INTERVAL_MIN_125US 10U     /* 1250 us  -> internal 1 */
-#define LLCP_CONN_RATE_INTERVAL_MAX_125US 32000U  /* 4 s (0x7D00) -> internal 3200 */
+#define LLCP_CONN_RATE_RCV_MIN_125US      10U     /* 1250 us -> internal 1 */
+#define LLCP_CONN_RATE_ECV_MIN_125US      3U      /* 375 us (ECV floor) */
+#define LLCP_CONN_RATE_INTERVAL_MAX_125US 32000U  /* 4 s (0x7D00) */
 
-/* Convert a 125 us-unit connection interval to internal 1.25 ms units on the
- * RCV grid. Returns true and writes *out_units on success; false for ECV
- * (non-multiple-of-10), sub-floor, or out-of-range values.
+/* Decode a 125 us-unit connection interval into the internal value (*out_units)
+ * and its tier (*is_ecv): RCV (multiple of 10) -> *out_units = v/10, is_ecv=false;
+ * ECV (not a multiple of 10) -> *out_units = v (125 us units), is_ecv=true.
+ * Returns false (reject) for sub-floor or out-of-range values.
  */
-static bool conn_rate_interval_from_125us(uint16_t interval_125us, uint16_t *out_units)
+static bool conn_rate_interval_from_125us(uint16_t interval_125us, uint16_t *out_units,
+					  bool *is_ecv)
 {
-	if ((interval_125us % 10U) != 0U ||
-	    interval_125us < LLCP_CONN_RATE_INTERVAL_MIN_125US ||
-	    interval_125us > LLCP_CONN_RATE_INTERVAL_MAX_125US) {
+	if (interval_125us > LLCP_CONN_RATE_INTERVAL_MAX_125US) {
 		return false;
 	}
 
-	*out_units = (uint16_t)(interval_125us / 10U);
+	if ((interval_125us % 10U) == 0U) {
+		if (interval_125us < LLCP_CONN_RATE_RCV_MIN_125US) {
+			return false;
+		}
+		*out_units = (uint16_t)(interval_125us / 10U);
+		*is_ecv = false;
+	} else {
+		if (interval_125us < LLCP_CONN_RATE_ECV_MIN_125US) {
+			return false;
+		}
+		*out_units = interval_125us;
+		*is_ecv = true;
+	}
 
 	return true;
 }
@@ -1227,9 +1241,13 @@ void llcp_pdu_encode_conn_rate_req(struct proc_ctx *ctx, struct pdu_data *pdu)
 	pdu->len = PDU_DATA_LLCTRL_LEN(conn_rate_req);
 	pdu->llctrl.opcode = PDU_DATA_LLCTRL_TYPE_CONN_RATE_REQ;
 
-	/* Internal 1.25 ms units -> 125 us units on air (RCV: always x10) */
-	p->interval_min = sys_cpu_to_le16(ctx->data.conn_rate.interval_min * 10U);
-	p->interval_max = sys_cpu_to_le16(ctx->data.conn_rate.interval_max * 10U);
+	/* Internal -> 125 us units on air: RCV is stored in 1.25 ms units (x10),
+	 * ECV in 125 us units (x1).
+	 */
+	p->interval_min = sys_cpu_to_le16(ctx->data.conn_rate.interval_min *
+					  (ctx->data.conn_rate.ecv ? 1U : 10U));
+	p->interval_max = sys_cpu_to_le16(ctx->data.conn_rate.interval_max *
+					  (ctx->data.conn_rate.ecv ? 1U : 10U));
 	p->subrate_factor_min = sys_cpu_to_le16(ctx->data.conn_rate.subrate_factor_min);
 	p->subrate_factor_max = sys_cpu_to_le16(ctx->data.conn_rate.subrate_factor_max);
 	p->max_latency = sys_cpu_to_le16(ctx->data.conn_rate.max_latency);
@@ -1249,21 +1267,26 @@ void llcp_pdu_decode_conn_rate_req(struct proc_ctx *ctx, struct pdu_data *pdu)
 	struct pdu_data_llctrl_conn_rate_req *p = &pdu->llctrl.conn_rate_req;
 	uint16_t interval_min;
 	uint16_t interval_max;
+	bool min_ecv;
+	bool max_ecv;
 
 	ctx->data.conn_rate.error = BT_HCI_ERR_SUCCESS;
 
-	/* Each of Interval_Min and Interval_Max must be on the RCV grid; a
-	 * straddle such as {min=8, max=10} is rejected because min is not a
-	 * multiple of 10.
+	/* Both Interval_Min and Interval_Max must decode AND be the same tier; a
+	 * straddle such as {min=8 (ECV), max=10 (RCV)} is rejected.
 	 */
-	if (!conn_rate_interval_from_125us(sys_le16_to_cpu(p->interval_min), &interval_min) ||
-	    !conn_rate_interval_from_125us(sys_le16_to_cpu(p->interval_max), &interval_max)) {
+	if (!conn_rate_interval_from_125us(sys_le16_to_cpu(p->interval_min), &interval_min,
+					   &min_ecv) ||
+	    !conn_rate_interval_from_125us(sys_le16_to_cpu(p->interval_max), &interval_max,
+					   &max_ecv) ||
+	    (min_ecv != max_ecv)) {
 		ctx->data.conn_rate.error = BT_HCI_ERR_UNSUPP_LL_PARAM_VAL;
 		return;
 	}
 
 	ctx->data.conn_rate.interval_min = interval_min;
 	ctx->data.conn_rate.interval_max = interval_max;
+	ctx->data.conn_rate.ecv = min_ecv;
 	ctx->data.conn_rate.subrate_factor_min = sys_le16_to_cpu(p->subrate_factor_min);
 	ctx->data.conn_rate.subrate_factor_max = sys_le16_to_cpu(p->subrate_factor_max);
 	ctx->data.conn_rate.max_latency = sys_le16_to_cpu(p->max_latency);
@@ -1284,7 +1307,8 @@ void llcp_pdu_encode_conn_rate_ind(struct proc_ctx *ctx, struct pdu_data *pdu)
 
 	/* transmitWindowOffset = WinOffset x 125 us (RCV: 0, no anchor move) */
 	p->win_offset = sys_cpu_to_le16((uint16_t)(ctx->data.conn_rate.win_offset_us / 125U));
-	p->interval = sys_cpu_to_le16(ctx->data.conn_rate.interval * 10U);
+	p->interval = sys_cpu_to_le16(ctx->data.conn_rate.interval *
+				      (ctx->data.conn_rate.ecv ? 1U : 10U));
 	p->instant = sys_cpu_to_le16(ctx->data.conn_rate.instant);
 	p->subrate_factor = sys_cpu_to_le16(ctx->data.conn_rate.subrate_factor);
 	p->latency = sys_cpu_to_le16(ctx->data.conn_rate.latency);
@@ -1296,16 +1320,18 @@ void llcp_pdu_decode_conn_rate_ind(struct proc_ctx *ctx, struct pdu_data *pdu)
 {
 	struct pdu_data_llctrl_conn_rate_ind *p = &pdu->llctrl.conn_rate_ind;
 	uint16_t interval;
+	bool is_ecv;
 
 	ctx->data.conn_rate.error = BT_HCI_ERR_SUCCESS;
 
-	if (!conn_rate_interval_from_125us(sys_le16_to_cpu(p->interval), &interval)) {
+	if (!conn_rate_interval_from_125us(sys_le16_to_cpu(p->interval), &interval, &is_ecv)) {
 		ctx->data.conn_rate.error = BT_HCI_ERR_UNSUPP_LL_PARAM_VAL;
 		return;
 	}
 
 	ctx->data.conn_rate.win_offset_us = (uint32_t)sys_le16_to_cpu(p->win_offset) * 125U;
 	ctx->data.conn_rate.interval = interval;
+	ctx->data.conn_rate.ecv = is_ecv;
 	ctx->data.conn_rate.instant = sys_le16_to_cpu(p->instant);
 	ctx->data.conn_rate.subrate_factor = sys_le16_to_cpu(p->subrate_factor);
 	ctx->data.conn_rate.latency = sys_le16_to_cpu(p->latency);
