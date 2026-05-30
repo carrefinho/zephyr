@@ -287,6 +287,71 @@ static int apply_subrate(uint16_t factor, uint16_t continuation)
 	return 0;
 }
 
+#if defined(CONFIG_SCI_LATENCY_ECV_SWEEP)
+/* ECV interval sweep: drive the link down the sub-1.25 ms band at factor 1,
+ * measuring round-trip GATT latency at each interval and stopping at the first
+ * one the silicon cannot sustain -- the HW floor. Confirms the bsim ~625 us
+ * nRF54L floor (single-timer drift / on-air margin at 150 us tIFS).
+ */
+static const uint16_t ecv_sweep_125us[] = { 6U, 5U, 4U, 3U }; /* 750/625/500/375 us */
+
+static int ecv_interval_sweep(void)
+{
+	LOG_INF("ECV interval sweep (factor 1, round-trip GATT read):");
+	LOG_INF("requested | applied | idle min/avg/max us | burst min/avg/max us");
+
+	for (int i = 0; i < (int)ARRAY_SIZE(ecv_sweep_125us); i++) {
+		uint16_t u = ecv_sweep_125us[i];
+		uint32_t want_us = (uint32_t)u * 125U;
+		struct bt_conn_le_conn_rate_param rate = {
+			.interval_min_125us = u, .interval_max_125us = u,
+			.subrate_min = 1U, .subrate_max = 1U, .max_latency = 0U,
+			.continuation_number = 0U,
+			.supervision_timeout_10ms = SCI_TIMEOUT_10MS,
+			.min_ce_len_125us = 1U, .max_ce_len_125us = 1U,
+		};
+		struct bt_conn_info info;
+		int32_t imn, iavg, imx, bmn, bavg, bmx;
+		int err;
+
+		conn_rate_status = 0xFFU;
+		err = bt_conn_le_conn_rate_request(default_conn, &rate);
+		if (err) {
+			LOG_ERR("%6u us | REQ rejected (err %d) -- floor is above this", want_us, err);
+			break;
+		}
+		if (k_sem_take(&sem_conn_rate, K_SECONDS(5)) != 0 ||
+		    conn_rate_status != BT_HCI_ERR_SUCCESS) {
+			LOG_ERR("%6u us | change failed (status 0x%02x) -- floor reached",
+				want_us, conn_rate_status);
+			break;
+		}
+		if (!default_conn) {
+			LOG_ERR("%6u us | link DROPPED applying interval -- floor reached", want_us);
+			break;
+		}
+		(void)bt_conn_get_info(default_conn, &info);
+
+		if (measure(IDLE_GAP_MS, &imn, &iavg, &imx) ||
+		    measure(BURST_GAP_MS, &bmn, &bavg, &bmx)) {
+			LOG_ERR("%6u us | link DROPPED during read -- floor reached", want_us);
+			break;
+		}
+
+		LOG_INF("%6u us | %5u us | %6d/%6d/%6d | %6d/%6d/%6d",
+			want_us, info.le.interval_us, imn, iavg, imx, bmn, bavg, bmx);
+
+		if (!default_conn) {
+			LOG_ERR("link dropped after %u us", want_us);
+			break;
+		}
+	}
+
+	LOG_INF("ECV sweep complete. Reset (J-Link/GDB) to re-run.");
+	return 0;
+}
+#endif /* CONFIG_SCI_LATENCY_ECV_SWEEP */
+
 int main(void)
 {
 	struct bt_conn_le_conn_rate_param rate = {
@@ -325,6 +390,10 @@ int main(void)
 	}
 	k_sleep(K_MSEC(200));
 
+#if defined(CONFIG_SCI_LATENCY_ECV_SWEEP)
+	ARG_UNUSED(rate);
+	return ecv_interval_sweep();
+#else
 #if defined(CONFIG_SCI_LATENCY_PLAIN_SUBRATE)
 	/* CONTROL: no SCI. Standard param update to 7.5 ms, then sweep subrate.
 	 * Isolates the original subrating path from the SCI/1.25 ms interaction.
@@ -389,6 +458,7 @@ int main(void)
 
 	LOG_INF("Sweep complete. Reset (J-Link/GDB) to re-run.");
 	return 0;
+#endif /* CONFIG_SCI_LATENCY_ECV_SWEEP */
 }
 
 #else /* peripheral */

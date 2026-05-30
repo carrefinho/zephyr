@@ -170,6 +170,9 @@ enum {
  * range, so this checks the subrate fields and the supervision-timeout vs the
  * requested (new) interval relationship. Returns true if acceptable.
  */
+/* __maybe_unused: only the Central role validates a received REQ (the Peripheral
+ * sends REQs / receives INDs), so this is unused in a peripheral-only build.
+ */
 static bool __maybe_unused conn_rate_req_acceptable(struct ll_conn *conn, struct proc_ctx *ctx)
 {
 	const bool is_ecv = ctx->data.conn_rate.ecv;
@@ -214,6 +217,9 @@ static bool __maybe_unused conn_rate_req_acceptable(struct ll_conn *conn, struct
  * values in ctx (from the Host's request or a Peripheral's REQ, already range
  * checked). Picks the largest acceptable subrate factor for maximum power
  * saving, like subrate_ind_params_calc.
+ */
+/* __maybe_unused: only the Central role composes the IND, so this is unused in a
+ * peripheral-only build (e.g. the sci_latency peripheral).
  */
 static void __maybe_unused conn_rate_ind_params_calc(struct ll_conn *conn, struct proc_ctx *ctx)
 {
