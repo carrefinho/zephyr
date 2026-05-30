@@ -99,6 +99,44 @@ volatile uint32_t ll_test_conn_event_count[CONFIG_BT_MAX_CONN];
 #define CONN_USES_1250_GRID(_lll) (false)
 #endif
 
+/* Extended Connection Interval Values (ECV): a 125 us-granular interval unit on
+ * the standard-tIFS grid (false / inert when SCI is disabled).
+ */
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+#define CONN_INTERVAL_IS_ECV(_lll) ((_lll)->ecv)
+#define CONN_ECV_INT_UNIT_US       125U
+#else
+#define CONN_INTERVAL_IS_ECV(_lll) (false)
+#define CONN_ECV_INT_UNIT_US       CONN_INT_UNIT_US
+#endif
+
+/* True when the connection uses the proprietary 500 us low-latency interval unit
+ * (sub-7.5 ms, not RCV/ECV): such a link stores `interval` but its on-air
+ * interval is (interval + 1) * 500 us. Centralizes the condition that the
+ * interval-unit / APTO / supervision sites each open-coded.
+ */
+static inline bool conn_interval_is_low_lat(const struct lll_conn *lll)
+{
+	return !((lll->interval >= BT_HCI_LE_INTERVAL_MIN) ||
+		 CONN_USES_1250_GRID(lll) || CONN_INTERVAL_IS_ECV(lll));
+}
+
+/* Per-connection connection-interval unit in microseconds: 125 us (ECV),
+ * 1.25 ms (RCV / >= 7.5 ms), or 500 us (proprietary low latency).
+ */
+static inline uint32_t conn_interval_unit_us(const struct lll_conn *lll)
+{
+	if (CONN_INTERVAL_IS_ECV(lll)) {
+		return CONN_ECV_INT_UNIT_US;
+	}
+
+	if (conn_interval_is_low_lat(lll)) {
+		return CONN_LOW_LAT_INT_UNIT_US;
+	}
+
+	return CONN_INT_UNIT_US;
+}
+
 static int init_reset(void);
 #if !defined(CONFIG_BT_CTLR_LOW_LAT)
 static void tx_demux_sched(struct ll_conn *conn);
@@ -2622,12 +2660,11 @@ void ull_conn_update_parameters(struct ll_conn *conn, uint8_t is_cu_proc, uint8_
 #endif
 
 	/* compensate for instant_latency due to laziness */
-	if ((lll->interval >= BT_HCI_LE_INTERVAL_MIN) || CONN_USES_1250_GRID(lll)) {
-		conn_interval_old = instant_latency * lll->interval;
-		conn_interval_unit_old = CONN_INT_UNIT_US;
-	} else {
+	conn_interval_unit_old = conn_interval_unit_us(lll);
+	if (conn_interval_is_low_lat(lll)) {
 		conn_interval_old = instant_latency * (lll->interval + 1U);
-		conn_interval_unit_old = CONN_LOW_LAT_INT_UNIT_US;
+	} else {
+		conn_interval_old = instant_latency * lll->interval;
 	}
 
 	/* The interval-unit, tIFS, and event-time (CE) reservation are three

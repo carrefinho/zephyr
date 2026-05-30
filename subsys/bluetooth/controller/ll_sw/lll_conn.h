@@ -79,6 +79,13 @@ struct lll_conn {
 	 * reservation); set when a sub-1.25 ms interval is committed.
 	 */
 	uint8_t reduced_ce:1;
+	/* This connection carries a 125 us-granular interval (ECV, Extended
+	 * Connection Interval Values) on the standard-tIFS grid -- lll->interval is
+	 * in 125 us units, not the 1.25 ms units of an RCV / >= 7.5 ms link. Set when
+	 * an ECV interval commits; consulted by conn_interval_unit_us() so the
+	 * interval / APTO / supervision / reservation math uses the 125 us unit.
+	 */
+	uint8_t ecv:1;
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
 	union {
