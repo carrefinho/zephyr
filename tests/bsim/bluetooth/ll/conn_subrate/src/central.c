@@ -1624,15 +1624,22 @@ static void test_central_main_sci_subrate(void)
  * 30 ms link's event floor fails, the full-slot reservation starves coexisting
  * links and the reduced-ce reservation work is required.
  */
-static void test_central_main_sci_coex(void)
+/* Coexistence under split load, parameterised by the fast-link interval (125 us
+ * units): RCV 1.25 ms (units=10) or ECV 625 us (units=5). The ECV case is the
+ * real test of the reduced-CE reservation at standard 150 us tIFS -- a sub-1.25 ms
+ * link must not starve a co-resident 30 ms link.
+ */
+static void sci_coex_run(uint16_t interval_125us)
 {
 	struct bt_conn_le_conn_rate_param param = {
-		.interval_min_125us = 10U, .interval_max_125us = 10U,
+		.interval_min_125us = interval_125us, .interval_max_125us = interval_125us,
 		.subrate_min = 1U, .subrate_max = 1U, .max_latency = 0U,
 		.continuation_number = 0U, .supervision_timeout_10ms = 200U,
 		.min_ce_len_125us = 1U, .max_ce_len_125us = 1U,
 	};
-	uint32_t before_sci, before_plain, sci_events, plain_events;
+	const uint32_t interval_us = (uint32_t)interval_125us * 125U;
+	const bool is_ecv = (interval_125us % 10U) != 0U;
+	uint32_t before_sci, before_plain, sci_events, plain_events, expected_sci;
 	uint16_t h_sci, h_plain;
 	int err, i;
 
@@ -1658,7 +1665,7 @@ static void test_central_main_sci_coex(void)
 		return;
 	}
 
-	/* Drive link 0 to 1.25 ms via SCI; link 1 stays at 30 ms. */
+	/* Drive link 0 to the fast (RCV or ECV) interval via SCI; link 1 stays 30 ms. */
 	efs_complete = false;
 	err = bt_conn_le_read_all_remote_features(m_conn[0], 1U);
 	if (err) {
@@ -1687,31 +1694,46 @@ static void test_central_main_sci_coex(void)
 	sci_events = ll_test_conn_event_count[h_sci] - before_sci;
 	plain_events = ll_test_conn_event_count[h_plain] - before_plain;
 
-	printk("Coex: SCI link (1.25 ms) %u events, plain link (30 ms) %u events in %u ms\n",
-	       sci_events, plain_events, LAT_COUNT_WINDOW_MS);
+	printk("Coex: %s link (%u us) %u events, plain link (30 ms) %u events in %u ms\n",
+	       is_ecv ? "ECV" : "RCV", interval_us, sci_events, plain_events,
+	       LAT_COUNT_WINDOW_MS);
 
-	/* The 1.25 ms link runs fast (a >=7.5 ms link could not deliver this many):
-	 * ~window/1.25 ms ~= 2400; require well above a 7.5 ms link's ~400.
+	/* The fast link runs near window/interval (a >=7.5 ms link could not deliver
+	 * this many); require at least 1/3 of nominal, still far above a 7.5 ms
+	 * link's ~400.
 	 */
-	if (sci_events < 800U) {
-		FAIL("Coex: SCI link stalled: %u events (expected >> 400 for 1.25 ms)\n",
-		     sci_events);
+	expected_sci = ((uint32_t)LAT_COUNT_WINDOW_MS * 1000U) / interval_us;
+	if (sci_events < (expected_sci / 3U)) {
+		FAIL("Coex: fast link stalled: %u events (nominal ~%u for %u us)\n",
+		     sci_events, expected_sci, interval_us);
 		return;
 	}
-	/* The 30 ms link must not be starved by the SCI slot reservation:
-	 * ~window/30 ms ~= 100; require >= 40 (a dropped link gives ~0).
+	/* The 30 ms link must not be starved by the fast link's slot reservation:
+	 * ~window/30 ms ~= 100; require >= 40 (a dropped link gives ~0). This is the
+	 * reduced-CE reservation working -- a full-slot reservation at a sub-1.25 ms
+	 * interval would over-reserve and starve the co-resident link.
 	 */
 	if (plain_events < 40U) {
-		FAIL("Coex: 30 ms link starved by the 1.25 ms link: %u events "
-		     "(expected ~100) -- reduced-ce reservation needed\n", plain_events);
+		FAIL("Coex: 30 ms link starved by the %u us link: %u events (expected "
+		     "~100) -- reduced-ce reservation failing\n", interval_us, plain_events);
 		return;
 	}
 
 	for (i = 0; i < 2; i++) {
 		(void)bt_conn_disconnect(m_conn[i], BT_HCI_ERR_REMOTE_USER_TERM_CONN);
 	}
-	PASS("Coex: 1.25 ms SCI link (%u ev) coexisted with a 30 ms link (%u ev)\n",
-	     sci_events, plain_events);
+	PASS("Coex: %s %u us link (%u ev) coexisted with a 30 ms link (%u ev)\n",
+	     is_ecv ? "ECV" : "RCV", interval_us, sci_events, plain_events);
+}
+
+static void test_central_main_sci_coex(void)
+{
+	sci_coex_run(10U);  /* RCV 1.25 ms */
+}
+
+static void test_central_main_ecv_coex(void)
+{
+	sci_coex_run(5U);   /* ECV 625 us */
 }
 #endif /* CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT */
 #endif /* CONFIG_BT_SHORTER_CONNECTION_INTERVALS */
@@ -1875,6 +1897,16 @@ static const struct bst_test_instance test_central[] = {
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_sci_coex,
+	},
+	{
+		.test_id = "central_ecv_coex",
+		.test_descr = "Central: a 625 us ECV link (125 us grid, 150 us tIFS, "
+			      "reduced CE) coexisting with a 30 ms link -- the under-split-"
+			      "load proof that the reduced-CE reservation holds a sub-1.25 ms "
+			      "interval without starving the co-resident link.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_ecv_coex,
 	},
 #endif
 #endif
