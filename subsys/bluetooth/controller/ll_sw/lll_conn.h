@@ -70,6 +70,15 @@ struct lll_conn {
 	 * as a proprietary low-latency (500 us-unit, 52 us-tIFS) interval.
 	 */
 	uint8_t rcv:1;
+	/* Reserve only the processing overhead (EVENT_OVERHEAD_START_US) for this
+	 * connection's events instead of the full event airtime, relying on
+	 * is_abort_cb to keep anchor-point sync on overlap. Decoupled from the
+	 * interval-unit and tIFS choices (see ull_conn_update_parameters) so a
+	 * sub-1.25 ms (ECV) link can take a reduced CE while keeping the 1.25 ms grid
+	 * and 150 us tIFS -- the FSU-independent low-interval floor. Defaults 0 (full
+	 * reservation); set when a sub-1.25 ms interval is committed.
+	 */
+	uint8_t reduced_ce:1;
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
 	union {

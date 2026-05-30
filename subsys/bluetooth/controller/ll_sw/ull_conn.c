@@ -2630,59 +2630,94 @@ void ull_conn_update_parameters(struct ll_conn *conn, uint8_t is_cu_proc, uint8_
 		conn_interval_unit_old = CONN_LOW_LAT_INT_UNIT_US;
 	}
 
-	if ((interval >= BT_HCI_LE_INTERVAL_MIN) || CONN_USES_1250_GRID(lll)) {
-		uint16_t max_tx_time;
-		uint16_t max_rx_time;
-		uint32_t slot_us;
+	/* The interval-unit, tIFS, and event-time (CE) reservation are three
+	 * orthogonal choices, decoupled here so a sub-1.25 ms link can take a reduced
+	 * reservation while keeping the 1.25 ms grid and the standard 150 us tIFS:
+	 *   (1) interval-unit: the 1.25 ms grid (>= 7.5 ms, or an RCV/ECV link via
+	 *       CONN_USES_1250_GRID) vs the proprietary 500 us low-latency unit;
+	 *   (2) tIFS: standard 150 us vs the shortened low-latency tIFS;
+	 *   (3) reservation: full event airtime vs processing-overhead-only (a
+	 *       reduced CE), relying on is_abort_cb to keep anchor sync on overlap.
+	 * The legacy low-latency path bundles all three (500 us unit + 52 us tIFS +
+	 * reduced CE); a reduced_ce link decouples (3) from (1)/(2).
+	 */
+	{
+		const bool grid_1250 = (interval >= BT_HCI_LE_INTERVAL_MIN) ||
+				       CONN_USES_1250_GRID(lll);
+		bool reduced_reservation = !grid_1250;
 
-		conn_interval_new = interval;
-		conn_interval_unit_new = CONN_INT_UNIT_US;
-		lll->tifs_tx_us = EVENT_IFS_DEFAULT_US;
-		lll->tifs_rx_us = EVENT_IFS_DEFAULT_US;
-		lll->tifs_hcto_us = EVENT_IFS_DEFAULT_US;
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+		reduced_reservation = reduced_reservation || lll->reduced_ce;
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
+		/* (1) interval-unit / grid */
+		if (grid_1250) {
+			conn_interval_new = interval;
+			conn_interval_unit_new = CONN_INT_UNIT_US;
+		} else {
+			conn_interval_new = interval + 1U;
+			conn_interval_unit_new = CONN_LOW_LAT_INT_UNIT_US;
+		}
+
+		/* (2) tIFS: shortened only on the proprietary low-latency path; an
+		 * RCV/ECV link on the 1.25 ms grid keeps the standard 150 us tIFS
+		 * (FSU may later shorten it, independently of the reservation).
+		 */
+		if (grid_1250) {
+			lll->tifs_tx_us = EVENT_IFS_DEFAULT_US;
+			lll->tifs_rx_us = EVENT_IFS_DEFAULT_US;
+			lll->tifs_hcto_us = EVENT_IFS_DEFAULT_US;
+		} else {
+			lll->tifs_tx_us = CONFIG_BT_CTLR_EVENT_IFS_LOW_LAT_US;
+			lll->tifs_rx_us = CONFIG_BT_CTLR_EVENT_IFS_LOW_LAT_US;
+			lll->tifs_hcto_us = CONFIG_BT_CTLR_EVENT_IFS_LOW_LAT_US;
+		}
+
+		/* (3) event-time reservation */
+		if (reduced_reservation) {
+			/* Reserve only the processing overhead; on overlap the
+			 * is_abort_cb mechanism continues the event so as not to
+			 * lose anchor-point sync.
+			 */
+			conn->ull.ticks_slot =
+				HAL_TICKER_US_TO_TICKS_CEIL(EVENT_OVERHEAD_START_US);
+		} else {
+			uint16_t max_tx_time;
+			uint16_t max_rx_time;
+			uint32_t slot_us;
 
 #if defined(CONFIG_BT_CTLR_DATA_LENGTH) && \
 	defined(CONFIG_BT_CTLR_SLOT_RESERVATION_UPDATE)
-		max_tx_time = lll->dle.eff.max_tx_time;
-		max_rx_time = lll->dle.eff.max_rx_time;
+			max_tx_time = lll->dle.eff.max_tx_time;
+			max_rx_time = lll->dle.eff.max_rx_time;
 
 #else /* !CONFIG_BT_CTLR_DATA_LENGTH ||
        * !CONFIG_BT_CTLR_SLOT_RESERVATION_UPDATE
        */
-		max_tx_time = PDU_DC_MAX_US(PDU_DC_PAYLOAD_SIZE_MIN, PHY_1M);
-		max_rx_time = PDU_DC_MAX_US(PDU_DC_PAYLOAD_SIZE_MIN, PHY_1M);
+			max_tx_time = PDU_DC_MAX_US(PDU_DC_PAYLOAD_SIZE_MIN, PHY_1M);
+			max_rx_time = PDU_DC_MAX_US(PDU_DC_PAYLOAD_SIZE_MIN, PHY_1M);
 #if defined(CONFIG_BT_CTLR_PHY)
-		max_tx_time = MAX(max_tx_time, PDU_DC_MAX_US(PDU_DC_PAYLOAD_SIZE_MIN, lll->phy_tx));
-		max_rx_time = MAX(max_rx_time, PDU_DC_MAX_US(PDU_DC_PAYLOAD_SIZE_MIN, lll->phy_rx));
+			max_tx_time = MAX(max_tx_time,
+					  PDU_DC_MAX_US(PDU_DC_PAYLOAD_SIZE_MIN, lll->phy_tx));
+			max_rx_time = MAX(max_rx_time,
+					  PDU_DC_MAX_US(PDU_DC_PAYLOAD_SIZE_MIN, lll->phy_rx));
 #endif /* !CONFIG_BT_CTLR_PHY */
 #endif /* !CONFIG_BT_CTLR_DATA_LENGTH ||
 	* !CONFIG_BT_CTLR_SLOT_RESERVATION_UPDATE
 	*/
 
-		/* Calculate event time reservation */
-		slot_us = max_tx_time + max_rx_time;
-		slot_us += lll->tifs_rx_us + (EVENT_CLOCK_JITTER_US << 1);
-		slot_us += ready_delay_us;
+			/* Calculate event time reservation */
+			slot_us = max_tx_time + max_rx_time;
+			slot_us += lll->tifs_rx_us + (EVENT_CLOCK_JITTER_US << 1);
+			slot_us += ready_delay_us;
 
-		if (IS_ENABLED(CONFIG_BT_CTLR_EVENT_OVERHEAD_RESERVE_MAX) ||
-		    (lll->role == BT_HCI_ROLE_CENTRAL)) {
-			slot_us += EVENT_OVERHEAD_START_US + EVENT_OVERHEAD_END_US;
+			if (IS_ENABLED(CONFIG_BT_CTLR_EVENT_OVERHEAD_RESERVE_MAX) ||
+			    (lll->role == BT_HCI_ROLE_CENTRAL)) {
+				slot_us += EVENT_OVERHEAD_START_US + EVENT_OVERHEAD_END_US;
+			}
+
+			conn->ull.ticks_slot = HAL_TICKER_US_TO_TICKS_CEIL(slot_us);
 		}
-
-		conn->ull.ticks_slot = HAL_TICKER_US_TO_TICKS_CEIL(slot_us);
-
-	} else {
-		conn_interval_new = interval + 1U;
-		conn_interval_unit_new = CONN_LOW_LAT_INT_UNIT_US;
-		lll->tifs_tx_us = CONFIG_BT_CTLR_EVENT_IFS_LOW_LAT_US;
-		lll->tifs_rx_us = CONFIG_BT_CTLR_EVENT_IFS_LOW_LAT_US;
-		lll->tifs_hcto_us = CONFIG_BT_CTLR_EVENT_IFS_LOW_LAT_US;
-		/* Reserve only the processing overhead, on overlap the
-		 * is_abort_cb mechanism will ensure to continue the event so
-		 * as to not loose anchor point sync.
-		 */
-		conn->ull.ticks_slot =
-			HAL_TICKER_US_TO_TICKS_CEIL(EVENT_OVERHEAD_START_US);
 	}
 
 	conn_interval_us = conn_interval_new * conn_interval_unit_new;
