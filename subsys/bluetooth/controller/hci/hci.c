@@ -1131,6 +1131,14 @@ static void read_supported_commands(struct net_buf *buf, struct net_buf **evt)
 	 */
 	rp->commands[47] |= BIT(2) | BIT(3);
 #endif /* CONFIG_BT_CTLR_EXTENDED_FEAT_SET */
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	/* LE Connection Rate Request (0x20A1), LE Set Default Rate Parameters
+	 * (0x20A2), LE Read Minimum Supported Connection Interval (0x20A3).
+	 * These are C.85-mandatory whenever the SCI feature bit (page 1, bit 72)
+	 * is advertised. [Core 6.2, Vol 4, Part E, 6.27]
+	 */
+	rp->commands[48] |= BIT(5) | BIT(6) | BIT(7);
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 }
 
 static void read_local_features(struct net_buf *buf, struct net_buf **evt)
@@ -2708,6 +2716,27 @@ static void le_connection_rate_request(struct net_buf *buf, struct net_buf **evt
 				       sys_le16_to_cpu(cmd->supervision_timeout));
 
 	*evt = cmd_status(status);
+}
+
+static void le_read_min_supported_conn_interval(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_op_le_read_min_supported_conn_interval *rp;
+	const uint8_t min_125us = CONFIG_BT_CTLR_SCI_ECV_INTERVAL_MIN_125US;
+	const uint8_t num_groups = 1U;
+
+	ARG_UNUSED(buf);
+
+	rp = hci_cmd_complete(evt, sizeof(*rp) + num_groups * sizeof(rp->groups[0]));
+	rp->status = BT_HCI_ERR_SUCCESS;
+	rp->min_supported_conn_interval = min_125us;
+	rp->num_groups = num_groups;
+	/* The ECV-and-not-RCV band this controller supports: from the configured
+	 * floor up to just below the 1.25 ms RCV grid (1125 us = 9), in 125 us steps.
+	 * The RCV grid (multiples of 1.25 ms) is supported implicitly above this.
+	 */
+	rp->groups[0].group_min = sys_cpu_to_le16(min_125us);
+	rp->groups[0].group_max = sys_cpu_to_le16(9U);
+	rp->groups[0].group_stride = sys_cpu_to_le16(1U);
 }
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
@@ -4886,6 +4915,10 @@ static int controller_cmd_handle(uint16_t  ocf, struct net_buf *cmd,
 
 	case BT_OCF(BT_HCI_OP_LE_CONNECTION_RATE_REQUEST):
 		le_connection_rate_request(cmd, evt);
+		break;
+
+	case BT_OCF(BT_HCI_OP_LE_READ_MIN_SUPPORTED_CONN_INTERVAL):
+		le_read_min_supported_conn_interval(cmd, evt);
 		break;
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
