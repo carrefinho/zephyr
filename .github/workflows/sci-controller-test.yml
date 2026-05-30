@@ -88,12 +88,13 @@ jobs:
           export EXECUTE_TIMEOUT=180
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_subrate.sh
 
-      - name: Run the Connection Rate coexistence scenario (nRF52 bsim)
+      - name: Run the Connection Rate coexistence scenarios (RCV + ECV, nRF52 bsim)
         shell: bash
         run: |
           export ZEPHYR_BASE="${PWD}"
           export EXECUTE_TIMEOUT=180
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_coex.sh
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_coex.sh
 
   # Same SCI scenarios on the nRF54L15 bsim target -- the primary ZMK SoC. nRF54L
   # uses a single radio timer; the sub-7.5 ms RCV interval stresses the event
@@ -165,6 +166,7 @@ jobs:
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci.sh
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_subrate.sh
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_sci_coex.sh
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_coex.sh
 
   # Build-only check of the hardware-in-the-loop sci_latency sample for the
   # physical nRF54L15 DK (both roles), so it does not bit-rot against controller
