@@ -1445,6 +1445,38 @@ static void test_central_main_sci(void)
 		}
 	}
 
+	/* HCI 0x20A3 (Read Min Supported Conn Interval): the controller must report
+	 * the configured floor (625 us = 5 x 125 us) and the ECV-and-not-RCV band it
+	 * sustains as one group {5, 9, 1} -- 625..1125 us in 125 us steps. This is the
+	 * same floor the enforcement below rejects 500 us against.
+	 */
+	{
+		struct bt_conn_le_min_conn_interval_info min_info;
+
+		err = bt_conn_le_read_min_conn_interval_groups(&min_info);
+		if (err) {
+			FAIL("Read Min Supported Conn Interval failed (err %d)\n", err);
+			return;
+		}
+		if (min_info.min_supported_conn_interval_us != 625U) {
+			FAIL("reported min interval = %u us, expected 625\n",
+			     min_info.min_supported_conn_interval_us);
+			return;
+		}
+		if (min_info.num_groups != 1U ||
+		    min_info.groups[0].min_125us != 5U ||
+		    min_info.groups[0].max_125us != 9U ||
+		    min_info.groups[0].stride_125us != 1U) {
+			FAIL("unexpected ECV group list: num=%u {%u,%u,%u}\n",
+			     min_info.num_groups, min_info.groups[0].min_125us,
+			     min_info.groups[0].max_125us, min_info.groups[0].stride_125us);
+			return;
+		}
+		printk("Read Min Supported Conn Interval: %u us, group {%u,%u,%u}\n",
+		       min_info.min_supported_conn_interval_us, min_info.groups[0].min_125us,
+		       min_info.groups[0].max_125us, min_info.groups[0].stride_125us);
+	}
+
 	/* Interval enforcement: sub-floor and tier-straddle intervals the host range
 	 * check (floor 375 us) lets through must be rejected by the controller. The
 	 * controller's ECV floor is configurable (BT_CTLR_SCI_ECV_INTERVAL_MIN_125US,
