@@ -29,6 +29,7 @@
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
+#include <zephyr/sys/byteorder.h>
 
 #include "conn_subrate.h"
 
@@ -1900,6 +1901,171 @@ static void test_central_main_sci_collision(void)
 	PASS("Central survived SCI/conn-update collision (interval %u us)\n", iv1);
 }
 
+/* One-way notification latency (the faithful HID-input direction): discover the
+ * peripheral's latency characteristic, subscribe, and measure recv_us - sent_us
+ * per notification. Valid because bsim runs both devices on one global sim clock
+ * (k_uptime is shared, cf. central_sci_collision).
+ */
+static struct bt_uuid_128 lat_disc_uuid;
+static struct bt_gatt_discover_params lat_disc;
+static struct bt_gatt_subscribe_params lat_sub;
+static volatile int lat_count;
+static volatile bool lat_subscribed;
+static int64_t lat_min_us = INT64_MAX;
+static int64_t lat_max_us;
+static int64_t lat_sum_us;
+
+static uint8_t lat_notify_cb(struct bt_conn *conn, struct bt_gatt_subscribe_params *params,
+			     const void *data, uint16_t length)
+{
+	ARG_UNUSED(conn);
+	ARG_UNUSED(params);
+
+	if (!data) {
+		return BT_GATT_ITER_STOP;
+	}
+	if (length >= sizeof(uint32_t)) {
+		uint32_t sent_us = sys_get_le32(data);
+		uint32_t now_us = (uint32_t)k_ticks_to_us_floor64(k_uptime_ticks());
+		int64_t lat = (uint32_t)(now_us - sent_us);
+
+		if (lat < lat_min_us) {
+			lat_min_us = lat;
+		}
+		if (lat > lat_max_us) {
+			lat_max_us = lat;
+		}
+		lat_sum_us += lat;
+		lat_count++;
+	}
+	return BT_GATT_ITER_CONTINUE;
+}
+
+static uint8_t lat_disc_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+			   struct bt_gatt_discover_params *params)
+{
+	int err;
+
+	if (!attr) {
+		return BT_GATT_ITER_STOP;
+	}
+
+	if (lat_disc.type == BT_GATT_DISCOVER_PRIMARY) {
+		memcpy(&lat_disc_uuid, BT_UUID_DECLARE_128(LAT_CHR_UUID), sizeof(lat_disc_uuid));
+		lat_disc.uuid = &lat_disc_uuid.uuid;
+		lat_disc.start_handle = attr->handle + 1;
+		lat_disc.type = BT_GATT_DISCOVER_CHARACTERISTIC;
+		(void)bt_gatt_discover(conn, &lat_disc);
+	} else if (lat_disc.type == BT_GATT_DISCOVER_CHARACTERISTIC) {
+		memcpy(&lat_disc_uuid, BT_UUID_GATT_CCC, sizeof(struct bt_uuid_16));
+		lat_disc.uuid = &lat_disc_uuid.uuid;
+		lat_disc.start_handle = attr->handle + 2;
+		lat_disc.type = BT_GATT_DISCOVER_DESCRIPTOR;
+		lat_sub.value_handle = attr->handle + 1;
+		(void)bt_gatt_discover(conn, &lat_disc);
+	} else {
+		lat_sub.notify = lat_notify_cb;
+		lat_sub.value = BT_GATT_CCC_NOTIFY;
+		lat_sub.ccc_handle = attr->handle;
+		err = bt_gatt_subscribe(conn, &lat_sub);
+		if (err && err != -EALREADY) {
+			FAIL("Central latency subscribe failed (err %d)\n", err);
+		} else {
+			lat_subscribed = true;
+		}
+	}
+
+	return BT_GATT_ITER_STOP;
+}
+
+static void test_central_main_sci_latency(void)
+{
+	struct bt_conn_le_conn_rate_param rate = {
+		.interval_min_125us = 10U,   /* 1250 us (RCV) */
+		.interval_max_125us = 10U,
+		.subrate_min = 1U,
+		.subrate_max = 1U,
+		.max_latency = 0U,
+		.continuation_number = 0U,
+		.supervision_timeout_10ms = CONN_TIMEOUT_UNITS,
+		.min_ce_len_125us = 1U,
+		.max_ce_len_125us = 1U,
+	};
+	int err;
+
+	bt_conn_cb_register(&sci_conn_callbacks);
+
+	err = bt_enable(NULL);
+	if (err) {
+		FAIL("Bluetooth init failed (err %d)\n", err);
+		return;
+	}
+
+	err = bt_le_scan_start(BT_LE_SCAN_ACTIVE, device_found);
+	if (err) {
+		FAIL("Scanning failed to start (err %d)\n", err);
+		return;
+	}
+	SUBRATE_WAIT(central_connected && default_conn);
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	/* Drive the link to a 1.25 ms RCV interval before measuring. */
+	efs_complete = false;
+	err = bt_conn_le_read_all_remote_features(default_conn, 1U);
+	if (err) {
+		FAIL("Central read-all-remote-features failed (err %d)\n", err);
+		return;
+	}
+	SUBRATE_WAIT(efs_complete);
+
+	err = bt_conn_le_conn_rate_request(default_conn, &rate);
+	if (err) {
+		FAIL("Central connection rate request failed (err %d)\n", err);
+		return;
+	}
+	SUBRATE_WAIT(sci_changed);
+	if (sci_status != BT_HCI_ERR_SUCCESS) {
+		FAIL("Connection rate change failed (status 0x%02x)\n", sci_status);
+		return;
+	}
+
+	/* Discover + subscribe to the peripheral's latency characteristic. */
+	memcpy(&lat_disc_uuid, BT_UUID_DECLARE_128(LAT_SVC_UUID), sizeof(lat_disc_uuid));
+	lat_disc.uuid = &lat_disc_uuid.uuid;
+	lat_disc.func = lat_disc_cb;
+	lat_disc.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
+	lat_disc.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
+	lat_disc.type = BT_GATT_DISCOVER_PRIMARY;
+	err = bt_gatt_discover(default_conn, &lat_disc);
+	if (err) {
+		FAIL("Central latency discover failed (err %d)\n", err);
+		return;
+	}
+	SUBRATE_WAIT(lat_subscribed);
+
+	SUBRATE_WAIT(lat_count >= LAT_NOTIFY_COUNT);
+	if (!central_connected || !default_conn) {
+		FAIL("Link dropped during latency sampling\n");
+		return;
+	}
+
+	printk("One-way notification latency @1.25 ms over %d samples: "
+	       "min %lld us, avg %lld us, max %lld us\n", lat_count, lat_min_us,
+	       lat_sum_us / lat_count, lat_max_us);
+
+	/* One-way (~1 interval + a single host traversal) must beat the round-trip
+	 * GATT read (~3-4 ms at 1.25 ms). Loose ceiling; the value is the number.
+	 */
+	if (lat_max_us > 8000) {
+		FAIL("One-way latency too high: max %lld us\n", lat_max_us);
+		return;
+	}
+
+	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	PASS("One-way latency @1.25 ms: min %lld / avg %lld / max %lld us (%d samples)\n",
+	     lat_min_us, lat_sum_us / lat_count, lat_max_us, lat_count);
+}
+
 static const struct bst_test_instance test_central[] = {
 	{
 		.test_id = "central",
@@ -2055,6 +2221,15 @@ static const struct bst_test_instance test_central[] = {
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_sci_collision,
+	},
+	{
+		.test_id = "central_sci_latency",
+		.test_descr = "Central: measures one-way notification latency (the HID "
+			      "input direction) on a 1.25 ms SCI link via a timestamped "
+			      "notify characteristic; reports min/avg/max.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_sci_latency,
 	},
 	{
 		.test_id = "central_ecv_coex",

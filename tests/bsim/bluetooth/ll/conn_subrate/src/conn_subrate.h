@@ -94,6 +94,19 @@
 #define CWRITE_CHR_UUID \
 	BT_UUID_128_ENCODE(0x5ab12702, 0x1234, 0x4c0d, 0x9e1a, 0xc0ffee000002)
 
+/* One-way latency test: a notify characteristic whose payload is the
+ * peripheral's send timestamp (uint32 us). The Central subscribes and, on each
+ * notification, computes recv_us - sent_us -- the one-way notification latency
+ * (the faithful HID-input direction), measurable because bsim runs both devices
+ * on one global simulated clock (k_uptime is shared, cf. the collision test).
+ */
+#define LAT_SVC_UUID \
+	BT_UUID_128_ENCODE(0x5ab12703, 0x1234, 0x4c0d, 0x9e1a, 0xc0ffee000003)
+#define LAT_CHR_UUID \
+	BT_UUID_128_ENCODE(0x5ab12704, 0x1234, 0x4c0d, 0x9e1a, 0xc0ffee000004)
+#define LAT_NOTIFY_COUNT   60   /* notifications to sample */
+#define LAT_NOTIFY_GAP_MS  20   /* spacing -> each lands fresh on the link */
+
 /* Notifications-under-subrating: notify slower than the skip period (factor *
  * interval = 240 ms at factor 8) so each notification is queued during a skip
  * and must wake the peripheral on a subrated event to be delivered - rather
