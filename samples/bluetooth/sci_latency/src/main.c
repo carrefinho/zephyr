@@ -47,7 +47,10 @@ static struct bt_conn *default_conn __maybe_unused;
 
 #if defined(CONFIG_SCI_LATENCY_CENTRAL)
 
-static const uint16_t sweep_factors[] = { 1U, 2U, 4U, 8U };
+/* __maybe_unused: the ECV-interval-sweep build (CONFIG_SCI_LATENCY_ECV_SWEEP)
+ * does not run the subrate-factor sweep, so these are unused there.
+ */
+static const uint16_t sweep_factors[] __maybe_unused = { 1U, 2U, 4U, 8U };
 #define READS_PER_FACTOR   10
 /* "idle" gap: > factor x interval so the peer re-sleeps between isolated reads. */
 #define IDLE_GAP_MS        CONFIG_SCI_LATENCY_IDLE_GAP_MS
@@ -260,7 +263,7 @@ static int measure(int gap_ms, int32_t *out_min, int32_t *out_avg, int32_t *out_
 /* Apply a subrate factor with the given continuation number, wait for it to take
  * effect. Returns 0 on success.
  */
-static int apply_subrate(uint16_t factor, uint16_t continuation)
+static int __maybe_unused apply_subrate(uint16_t factor, uint16_t continuation)
 {
 	struct bt_conn_le_subrate_param sub = {
 		.subrate_min = factor,
