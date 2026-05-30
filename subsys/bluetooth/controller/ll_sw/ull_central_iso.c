@@ -704,6 +704,16 @@ uint8_t ll_cis_create_check(uint16_t cis_handle, uint16_t acl_handle)
 			return BT_HCI_ERR_CMD_DISALLOWED;
 		}
 
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+		/* The CIS scheduling math (ull_conn_iso) derives event offsets from
+		 * the ACL interval in 1.25 ms units; an ECV ACL stores 125 us units,
+		 * so a CIS on it would be scheduled 10x wrong. Disallow it.
+		 */
+		if (conn->lll.ecv) {
+			return BT_HCI_ERR_CMD_DISALLOWED;
+		}
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
 		/* Verify handle validity and association */
 		cis = ll_conn_iso_stream_get(cis_handle);
 

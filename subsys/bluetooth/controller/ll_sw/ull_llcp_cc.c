@@ -334,6 +334,15 @@ static void rp_cc_state_wait_rx_cis_req(struct ll_conn *conn, struct proc_ctx *c
 		/* Check PHY */
 		ctx->data.cis_create.error = rp_cc_check_phy(conn, ctx, pdu);
 
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+		/* The CIS scheduling math assumes a 1.25 ms-unit ACL interval; an
+		 * ECV ACL stores 125 us units, so reject a CIS request on it.
+		 */
+		if (ctx->data.cis_create.error == BT_HCI_ERR_SUCCESS && conn->lll.ecv) {
+			ctx->data.cis_create.error = BT_HCI_ERR_UNSUPP_FEATURE_PARAM_VAL;
+		}
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
 		if (ctx->data.cis_create.error == BT_HCI_ERR_SUCCESS) {
 			ctx->data.cis_create.error =
 				ull_peripheral_iso_acquire(conn, &pdu->llctrl.cis_req,

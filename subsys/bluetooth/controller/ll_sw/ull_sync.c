@@ -1941,6 +1941,17 @@ void ull_sync_transfer_received(struct ll_conn *conn, uint16_t service_data,
 		return;
 	}
 
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	if (conn->lll.ecv) {
+		/* The sync-info offset is compensated in ACL connection events sized
+		 * in 1.25 ms units (ull_sync_setup_from_sync_transfer); an ECV ACL
+		 * stores 125 us units, so the offset would be 10x wrong. Ignore the
+		 * transfer rather than schedule the sync at the wrong anchor.
+		 */
+		return;
+	}
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
 #if defined(CONFIG_BT_CTLR_CHECK_SAME_PEER_SYNC)
 	/* Do not sync twice to the same peer and same SID */
 	if (peer_sid_sync_exists(addr_type, adv_addr, sid)) {

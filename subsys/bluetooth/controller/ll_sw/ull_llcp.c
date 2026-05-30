@@ -1257,6 +1257,16 @@ uint8_t ull_cp_periodic_sync(struct ll_conn *conn, struct ll_sync_set *sync,
 		return BT_HCI_ERR_UNSUPP_REMOTE_FEATURE;
 	}
 
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+	/* The transferred sync-info offset is compensated in ACL connection
+	 * events sized in 1.25 ms units; an ECV ACL stores 125 us units, so the
+	 * compensation would be 10x wrong. Disallow PAST over an ECV connection.
+	 */
+	if (conn->lll.ecv) {
+		return BT_HCI_ERR_CMD_DISALLOWED;
+	}
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
 	ctx = llcp_create_local_procedure(PROC_PERIODIC_SYNC);
 	if (!ctx) {
 		return BT_HCI_ERR_CMD_DISALLOWED;
