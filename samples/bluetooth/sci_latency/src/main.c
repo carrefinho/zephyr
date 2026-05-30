@@ -43,7 +43,7 @@ LOG_MODULE_REGISTER(sci_latency, LOG_LEVEL_INF);
 #define SCI_TIMEOUT_10MS        200U
 #define SUBRATE_TIMEOUT_10MS    200U
 
-static struct bt_conn *default_conn;
+static struct bt_conn *default_conn __maybe_unused;
 
 #if defined(CONFIG_SCI_LATENCY_CENTRAL)
 
@@ -141,7 +141,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 }
 
 static void read_all_remote_feat_complete(struct bt_conn *conn,
-					  struct bt_conn_le_read_all_remote_feat_complete *params)
+					  const struct bt_conn_le_read_all_remote_feat_complete *params)
 {
 	k_sem_give(&sem_feat);
 }
