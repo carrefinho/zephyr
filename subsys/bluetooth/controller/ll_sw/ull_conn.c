@@ -492,7 +492,8 @@ uint8_t ll_conn_rate_req_send(uint16_t handle, uint16_t interval_min_125us,
 	 */
 	is_ecv = (interval_min_125us % 10U) != 0U;
 	if ((((interval_max_125us % 10U) != 0U) != is_ecv) ||
-	    (interval_min_125us < (is_ecv ? 0x0003U : 0x000AU)) ||
+	    (interval_min_125us <
+	     (is_ecv ? CONFIG_BT_CTLR_SCI_ECV_INTERVAL_MIN_125US : 0x000AU)) ||
 	    (interval_max_125us > 0x7D00U) ||
 	    (interval_max_125us < interval_min_125us)) {
 		return BT_HCI_ERR_INVALID_PARAM;

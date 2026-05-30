@@ -1446,12 +1446,16 @@ static void test_central_main_sci(void)
 	}
 
 	/* Interval enforcement: sub-floor and tier-straddle intervals the host range
-	 * check (floor 375 us) lets through must be rejected by the controller. (A
-	 * valid ECV interval such as {9,9} = 1125 us is now ACCEPTED -- tested below.)
+	 * check (floor 375 us) lets through must be rejected by the controller. The
+	 * controller's ECV floor is configurable (BT_CTLR_SCI_ECV_INTERVAL_MIN_125US,
+	 * = 5 / 625 us here = the nRF54L15 HW floor), so even a spec-valid 500 us is
+	 * rejected. (A valid ECV interval >= the floor, such as 625 us, is ACCEPTED --
+	 * tested below.)
 	 */
 	{
 		static const uint16_t bad_125us[][2] = {
-			{2U, 2U},    /* 250 us, below the 375 us ECV floor */
+			{2U, 2U},    /* 250 us, below the spec 375 us ECV floor */
+			{4U, 4U},    /* 500 us, valid spec ECV but below the 625 us HW floor */
 			{8U, 10U},   /* straddle: 8 (ECV) with 10 (RCV) */
 		};
 

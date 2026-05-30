@@ -1186,6 +1186,23 @@ config BT_CTLR_SHORTER_CONNECTION_INTERVALS
 	  Enable support for Bluetooth 6.2 Shorter Connection Intervals
 	  in the controller.
 
+config BT_CTLR_SCI_ECV_INTERVAL_MIN_125US
+	int "ECV minimum supported connection interval (125 us units)"
+	depends on BT_CTLR_SHORTER_CONNECTION_INTERVALS
+	default 3
+	range 3 9
+	help
+	  Hardware floor for the optional ECV (Extended Connection Interval Values,
+	  125 us-granular) tier, in 125 us units: 3 = 375 us (the Core 6.2 spec floor),
+	  5 = 625 us, etc. The controller rejects ECV Connection Rate requests below
+	  this floor (one of the three enforcement sites: the PDU codec, the HCI
+	  Connection Rate Request, and the peer-REQ acceptance check), and reports it
+	  via HCI Read Minimum Supported Connection Interval. Set it to the SoC's
+	  measured floor -- e.g. 5 (625 us) on nRF54L15 single-timer, where intervals
+	  below ~625 us exhaust the prepare pipeline / event-overhead budget and would
+	  assert on apply. The default 3 keeps the spec floor for SoCs (or bsim) that
+	  can sustain it.
+
 rsource "Kconfig.df"
 rsource "Kconfig.ll_sw_split"
 rsource "Kconfig.dtm"

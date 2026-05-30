@@ -1201,7 +1201,7 @@ void llcp_pdu_decode_subrate_ind(struct proc_ctx *ctx, struct pdu_data *pdu)
  * the encode side knows whether to multiply by 10 (RCV) or 1 (ECV).
  */
 #define LLCP_CONN_RATE_RCV_MIN_125US      10U     /* 1250 us -> internal 1 */
-#define LLCP_CONN_RATE_ECV_MIN_125US      3U      /* 375 us (ECV floor) */
+#define LLCP_CONN_RATE_ECV_MIN_125US      CONFIG_BT_CTLR_SCI_ECV_INTERVAL_MIN_125US
 #define LLCP_CONN_RATE_INTERVAL_MAX_125US 32000U  /* 4 s (0x7D00) */
 
 /* Decode a 125 us-unit connection interval into the internal value (*out_units)
