@@ -11,16 +11,17 @@ config SCI_LATENCY_CENTRAL
 	  UART. When unset, this build is the Peripheral that advertises and accepts.
 
 config SCI_LATENCY_ECV_SWEEP
-	bool "ECV: sweep sub-1.25 ms intervals {750,625,500,375} us (find the HW floor)"
+	bool "ECV: sweep the sub-1.25 ms band 1125..375 us (find the HW floor)"
 	depends on SCI_LATENCY_CENTRAL
 	help
-	  Instead of a fixed 1.25 ms interval + subrate sweep, drive the link down the
-	  sub-1.25 ms ECV (Extended Connection Interval Values) band -- 750, 625, 500,
-	  375 us -- at subrate factor 1, measuring round-trip GATT latency at each and
-	  stopping at the first interval the silicon cannot sustain. This is the
-	  hardware confirmation of the bsim ~625 us nRF54L floor: single-timer
-	  cumulative drift and real on-air margin at the standard 150 us tIFS, which
-	  the idealised bsim radio model cannot reproduce.
+	  Instead of a fixed 1.25 ms interval + subrate sweep, start just below the
+	  known-good RCV 1.25 ms and drive the link down the whole ECV (Extended
+	  Connection Interval Values) band -- 1125, 1000, 875, 750, 625, 500, 375 us --
+	  at subrate factor 1, measuring round-trip GATT latency at each and stopping at
+	  the first interval the silicon cannot sustain. This finds the hardware floor
+	  wherever it is: bsim (idealised radio) held 750/625 us, but real single-timer
+	  silicon (cumulative drift + on-air margin at the standard 150 us tIFS) may
+	  floor higher -- which the idealised bsim radio model cannot reproduce.
 
 config SCI_LATENCY_PLAIN_SUBRATE
 	bool "Control: plain subrating at 7.5 ms (no SCI / Connection Rate Update)"

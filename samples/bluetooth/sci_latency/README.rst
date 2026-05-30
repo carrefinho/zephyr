@@ -62,18 +62,21 @@ Interval Values) tier, build the central with ``ecv_sweep.conf`` instead of
        samples/bluetooth/sci_latency -- -DEXTRA_CONF_FILE=ecv_sweep.conf
    west flash -d build/central --dev-id <SEGGER_SN_2>
 
-This drives the link down the 125 us-granular sub-1.25 ms band -- **750, 625,
-500, 375 us** -- at subrate factor 1, on the standard 150 us tIFS with a reduced
-CE reservation, measuring round-trip GATT latency at each and stopping at the
-first interval the silicon cannot sustain. It is the on-silicon confirmation of
-the bsim ~625 us nRF54L floor: single-timer cumulative drift and real on-air
-margin, which the idealised bsim radio model cannot reproduce. Example output::
+Starting just below the known-good RCV 1.25 ms, this drives the link down the
+whole 125 us-granular ECV band -- **1125, 1000, 875, 750, 625, 500, 375 us** --
+at subrate factor 1, on the standard 150 us tIFS with a reduced CE reservation,
+measuring round-trip GATT latency at each and stopping at the first interval the
+silicon cannot sustain. It finds the hardware floor wherever it is: bsim
+(idealised radio) held 750/625 us, but real single-timer silicon (cumulative
+drift + on-air margin) may floor higher -- which is exactly what this sweep
+determines. Example output (the floor shown is illustrative, not a prediction)::
 
    ECV interval sweep (factor 1, round-trip GATT read):
    requested | applied | idle min/avg/max us | burst min/avg/max us
-      750 us |  750 us |   ...  |   ...  |   ...
-      625 us |  625 us |   ...  |   ...  |   ...
-      500 us | link DROPPED applying interval -- floor reached
+     1125 us | 1125 us |   ...  |   ...  |   ...
+     1000 us | 1000 us |   ...  |   ...  |   ...
+      875 us |  875 us |   ...  |   ...  |   ...
+      750 us | link DROPPED applying interval -- floor reached
    ECV sweep complete. Reset (J-Link/GDB) to re-run.
 
 Observe and drive

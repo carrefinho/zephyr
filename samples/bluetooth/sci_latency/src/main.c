@@ -288,12 +288,16 @@ static int apply_subrate(uint16_t factor, uint16_t continuation)
 }
 
 #if defined(CONFIG_SCI_LATENCY_ECV_SWEEP)
-/* ECV interval sweep: drive the link down the sub-1.25 ms band at factor 1,
- * measuring round-trip GATT latency at each interval and stopping at the first
- * one the silicon cannot sustain -- the HW floor. Confirms the bsim ~625 us
- * nRF54L floor (single-timer drift / on-air margin at 150 us tIFS).
+/* ECV interval sweep: starting just below the known-good RCV 1.25 ms, drive the
+ * link down the whole ECV-and-not-RCV band at factor 1, measuring round-trip GATT
+ * latency at each interval and stopping at the first one the silicon cannot
+ * sustain -- the HW floor, wherever it is. bsim (idealised radio) held 750/625 us;
+ * real single-timer silicon (cumulative drift + on-air margin at the standard
+ * 150 us tIFS) may floor higher, which is exactly what this sweep determines.
  */
-static const uint16_t ecv_sweep_125us[] = { 6U, 5U, 4U, 3U }; /* 750/625/500/375 us */
+static const uint16_t ecv_sweep_125us[] = {
+	9U, 8U, 7U, 6U, 5U, 4U, 3U, /* 1125/1000/875/750/625/500/375 us */
+};
 
 static int ecv_interval_sweep(void)
 {
