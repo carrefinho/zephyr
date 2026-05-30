@@ -1139,6 +1139,13 @@ static void read_supported_commands(struct net_buf *buf, struct net_buf **evt)
 	 */
 	rp->commands[48] |= BIT(5) | BIT(6) | BIT(7);
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+	/* LE Frame Space Update (0x209D). C.79-mandatory whenever the Frame Space
+	 * Update feature bit (page 1, bit 65) is advertised. [Core 6.2, Vol 4,
+	 * Part E, 6.27, octet 48 bit 1]
+	 */
+	rp->commands[48] |= BIT(1);
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
 }
 
 static void read_local_features(struct net_buf *buf, struct net_buf **evt)
@@ -2739,6 +2746,22 @@ static void le_read_min_supported_conn_interval(struct net_buf *buf, struct net_
 	rp->groups[0].group_stride = sys_cpu_to_le16(1U);
 }
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+static void le_frame_space_update(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_cp_le_frame_space_update *cmd = (void *)buf->data;
+	uint8_t status;
+
+	status = ll_le_frame_space_update(sys_le16_to_cpu(cmd->handle),
+					  sys_le16_to_cpu(cmd->frame_space_min),
+					  sys_le16_to_cpu(cmd->frame_space_max),
+					  cmd->phys,
+					  sys_le16_to_cpu(cmd->spacing_types));
+
+	*evt = cmd_status(status);
+}
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
 
 #if defined(CONFIG_BT_CTLR_CONN_PARAM_REQ)
 static void le_conn_param_req_reply(struct net_buf *buf, struct net_buf **evt)
@@ -4921,6 +4944,12 @@ static int controller_cmd_handle(uint16_t  ocf, struct net_buf *cmd,
 		le_read_min_supported_conn_interval(cmd, evt);
 		break;
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+	case BT_OCF(BT_HCI_OP_LE_FRAME_SPACE_UPDATE):
+		le_frame_space_update(cmd, evt);
+		break;
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
 
 #if defined(CONFIG_BT_CTLR_DATA_LENGTH)
 	case BT_OCF(BT_HCI_OP_LE_SET_DATA_LEN):

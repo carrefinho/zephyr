@@ -541,6 +541,29 @@ uint8_t ll_conn_rate_req_send(uint16_t handle, uint16_t interval_min_125us,
 }
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+uint8_t ll_le_frame_space_update(uint16_t handle, uint16_t fs_min, uint16_t fs_max,
+				 uint8_t phys, uint16_t spacing_types)
+{
+	struct ll_conn *conn;
+
+	conn = ll_connected_get(handle);
+	if (!conn) {
+		return BT_HCI_ERR_UNKNOWN_CONN_ID;
+	}
+
+	/* Core 6.2 7.8.151: FS_Min <= FS_Max, FS_Max <= 10 ms; at least one PHY and
+	 * one spacing type selected. The responder applies the spec selection rules.
+	 */
+	if ((fs_min > fs_max) || (fs_max > 10000U) || (phys == 0U) ||
+	    (spacing_types == 0U)) {
+		return BT_HCI_ERR_INVALID_PARAM;
+	}
+
+	return ull_cp_frame_space_update(conn, fs_min, fs_max, phys, spacing_types);
+}
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
+
 uint8_t ll_chm_get(uint16_t handle, uint8_t *chm)
 {
 	struct ll_conn *conn;

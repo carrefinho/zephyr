@@ -283,6 +283,11 @@ uint8_t ll_conn_rate_req_send(uint16_t handle, uint16_t conn_interval_min,
 			      uint16_t subrate_max, uint16_t max_latency,
 			      uint16_t continuation_number, uint16_t supervision_timeout);
 #endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
+
+#if defined(CONFIG_BT_CTLR_FRAME_SPACE_UPDATE)
+uint8_t ll_le_frame_space_update(uint16_t handle, uint16_t fs_min, uint16_t fs_max,
+				 uint8_t phys, uint16_t spacing_types);
+#endif /* CONFIG_BT_CTLR_FRAME_SPACE_UPDATE */
 uint8_t ll_chm_update(uint8_t const *const chm);
 uint8_t ll_chm_get(uint16_t handle, uint8_t *const chm);
 uint8_t ll_enc_req_send(uint16_t handle, uint8_t const *const rand_num, uint8_t const *const ediv,
