@@ -24,3 +24,11 @@ tests:
       - nrf52_bsim
     integration_platforms:
       - nrf54l15dk/nrf54l15/cpuapp
+  sample.bluetooth.sci_latency.ecv_sweep:
+    build_only: true
+    extra_args: EXTRA_CONF_FILE=ecv_sweep.conf
+    platform_allow:
+      - nrf54l15dk/nrf54l15/cpuapp
+      - nrf52_bsim
+    integration_platforms:
+      - nrf54l15dk/nrf54l15/cpuapp

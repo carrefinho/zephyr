@@ -51,6 +51,31 @@ Build and flash the **central** to the second DK::
 (``nrfjprog --ids`` or ``JLinkExe`` lists them); omit it if only one DK is
 attached at a time.
 
+ECV interval sweep (the sub-1.25 ms floor)
+==========================================
+
+To find the **hardware floor** for the optional ECV (Extended Connection
+Interval Values) tier, build the central with ``ecv_sweep.conf`` instead of
+``central.conf`` (the peripheral is unchanged)::
+
+   west build -b nrf54l15dk/nrf54l15/cpuapp -d build/central \
+       samples/bluetooth/sci_latency -- -DEXTRA_CONF_FILE=ecv_sweep.conf
+   west flash -d build/central --dev-id <SEGGER_SN_2>
+
+This drives the link down the 125 us-granular sub-1.25 ms band -- **750, 625,
+500, 375 us** -- at subrate factor 1, on the standard 150 us tIFS with a reduced
+CE reservation, measuring round-trip GATT latency at each and stopping at the
+first interval the silicon cannot sustain. It is the on-silicon confirmation of
+the bsim ~625 us nRF54L floor: single-timer cumulative drift and real on-air
+margin, which the idealised bsim radio model cannot reproduce. Example output::
+
+   ECV interval sweep (factor 1, round-trip GATT read):
+   requested | applied | idle min/avg/max us | burst min/avg/max us
+      750 us |  750 us |   ...  |   ...  |   ...
+      625 us |  625 us |   ...  |   ...  |   ...
+      500 us | link DROPPED applying interval -- floor reached
+   ECV sweep complete. Reset (J-Link/GDB) to re-run.
+
 Observe and drive
 *****************
 
