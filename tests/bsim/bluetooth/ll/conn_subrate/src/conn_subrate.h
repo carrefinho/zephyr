@@ -24,17 +24,22 @@
  */
 #define ECV_LOWLAT_UNIT_US      125U
 #define ECV_US_TO_LL_UNITS(_us) ((uint16_t)((_us) / ECV_LOWLAT_UNIT_US - 1U))
-/* Swept descending to FIND the floor. The low-latency path only engages for units
- * < BT_HCI_LE_INTERVAL_MIN (6), i.e. <= 6*125 = 750 us at this unit -- higher
- * intervals escape to the 1250 us grid (full reservation), so 750 us is the top.
- * Earlier runs showed the band {750,625} holds at default sizing but stepping
- * lower trips a PERIPHERAL assert -- ull_event_done_extra_get() returns NULL
- * (done-extra pool exhaustion, lll_conn.c:282/1024). The overlay now raises
- * BT_CTLR_EVENT_DONE_MAX so the wide sweep can degrade gracefully: if cadence
- * collapses (harness reports the floor) the floor was scheduling-bound; if a
- * bigger pool lets it hold lower, the floor was pool-bound. 750 = the eval's safe
- * ECV floor (the gate); 625 = stretch; 500/375(spec floor)/250 probe below. */
-#define ECV_SWEEP_US_LIST       { 750U, 625U, 500U, 375U, 250U }
+/* The go/no-go gate band, swept descending. Low-lat engages only for units <
+ * BT_HCI_LE_INTERVAL_MIN (6) => <= 750 us at this 125 us unit (higher escapes to
+ * the 1250 us grid). Capped at 625 us: that is the measured nRF54L floor and
+ * going lower hard-asserts there.
+ *
+ * MEASURED FLOORS (bsim, 30 ms-coex split; run 26654390506 @ default pool 4 and
+ * run 26668227699 @ BT_CTLR_EVENT_DONE_MAX=12):
+ *   nRF54L (single-timer, primary): holds 750/625 us @ 95/93%. Below ~625 us it
+ *     is SCHEDULING/PIPELINE-bound, NOT pool-bound -- raising the done-extra pool
+ *     only moved the assert from done-extra exhaustion (lll_conn.c) to the prepare
+ *     pipeline (lll.c:892, EVENT_PIPELINE_MAX=7). ~625 us is the practical floor.
+ *   nRF52 (dual-timer): WAS pool-bound -- with the bigger pool it holds gracefully
+ *     to 375 us @ 95% (the spec ECV floor) and only drops at 250 us (supervision
+ *     timeout, below the radio exchange).
+ * The gate stays the 750 us safe floor holding; 625 us is the stretch, validated. */
+#define ECV_SWEEP_US_LIST       { 750U, 625U }
 #define ECV_COUNT_WINDOW_MS     2000  /* per-interval cadence measurement window */
 #define ECV_SETTLE_MS           1000  /* let each interval update take effect on air */
 #define ECV_HOLD_PCT            75U   /* >= this cadence == anchor held at this interval */
