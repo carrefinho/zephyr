@@ -14,10 +14,11 @@
 
 source "${ZEPHYR_BASE}/tests/bsim/sh_common.source"
 
-# With the xo_drift sweep forcing collisions, a repro no longer depends on luck,
-# so a few seeds (varying the initial phase) over a longer sim suffice.
+# Coprime intervals beat the events through collision continuously (~every
+# 52 ms), so a repro no longer depends on luck or a long soak; a few seeds
+# (varying the initial phase) over a short sim suffice.
 seeds="${SEEDS:-1 2 3 4 5}"
-export SIM_US="${SIM_US:-60e6}"
+export SIM_US="${SIM_US:-30e6}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 for s in ${seeds}; do

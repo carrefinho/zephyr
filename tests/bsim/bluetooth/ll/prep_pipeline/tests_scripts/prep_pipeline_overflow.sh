@@ -27,12 +27,12 @@ bin_suffix="${BIN_SUFFIX:-prj_conf_overlay_accel_conf}"
 bin="./bs_${BOARD_TS}_tests_bsim_bluetooth_ll_prep_pipeline_${bin_suffix}"
 sid="prep_pipe_s${seed}"
 
-# Per-device crystal drift (-xo_drift, fraction; -40e-6 = -40ppm). bsim defaults
-# to 0 = no relative drift = the two anchors never sweep = no collision = no bug.
-# The host link anchor follows the HOST clock; the split link follows the DUT
-# (it is central there). So drifting the HOST relative to the DUT makes the DUT's
-# two events sweep into collision. 300ppm (vs the real ~40ppm) just sweeps faster.
-HOST_DRIFT="${HOST_DRIFT:-300e-6}"
+# Per-device crystal drift (-xo_drift, fraction; -40e-6 = -40ppm). The coprime
+# 6/7 intervals already beat the events through collision, so this is just a
+# small REALISTIC perturbation (+20ppm host vs DUT, within the ~+-40ppm a real
+# crystal does) layered on top -- it nudges the phase the way silicon does
+# without the supervision-timeout a large drift causes.
+HOST_DRIFT="${HOST_DRIFT:-20e-6}"
 DUT_DRIFT="${DUT_DRIFT:-0}"
 
 cd "${BSIM_OUT_PATH}/bin"

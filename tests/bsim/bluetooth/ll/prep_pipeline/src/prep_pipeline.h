@@ -34,9 +34,19 @@
  * per-device -xo_drift to reproduce the sweep (exaggerated to collide fast).
  * Auto param update is disabled (prj.conf) so the intervals stay put.
  */
-#define SPLIT_INTERVAL_UNITS 6U   /* 7.5 ms (DUT is central here) */
-#define HOST_INTERVAL_UNITS  12U  /* 15 ms  (DUT is peripheral here) */
-#define CONN_LATENCY         30U
+/* The real intervals (split 6, host 12 or 9) are harmonic/semi-harmonic, so on
+ * silicon they only sweep into collision via crystal drift. In bsim all clocks
+ * are ideal (xo_drift=0), so harmonic intervals never collide, and forcing the
+ * sweep with a large xo_drift instead breaks the link (the peripheral can't
+ * track the drifted anchor -> supervision timeout). Instead pick COPRIME
+ * intervals: 6 and 7 share no factor, so the host event beats through every
+ * phase relative to the split events (~every 42 units = 52.5 ms) with ZERO
+ * drift and rock-stable links -- reproducing the same different-rate-collision
+ * mechanism the dumps show, deterministically. Latency 0: under continuous
+ * traffic the real links don't skip either (latency_event=0 in the dump). */
+#define SPLIT_INTERVAL_UNITS 6U   /* 7.5 ms   (DUT is central here) */
+#define HOST_INTERVAL_UNITS  7U   /* 8.75 ms  (DUT is peripheral here; coprime to 6) */
+#define CONN_LATENCY         0U
 #define CONN_TIMEOUT_UNITS   400U /* 4 s (10 ms units) */
 
 /* Advertised names, so each scanner connects to the right peer. */

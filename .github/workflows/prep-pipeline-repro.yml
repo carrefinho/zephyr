@@ -86,7 +86,7 @@ jobs:
         run: |
           export ZEPHYR_BASE="${PWD}"
           export SEEDS="1 2 3 4 5"
-          export SIM_US=60e6
+          export SIM_US=30e6
           tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh
 
       - name: Upload logs
