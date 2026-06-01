@@ -22,13 +22,22 @@
 #ifndef PREP_PIPELINE_H_
 #define PREP_PIPELINE_H_
 
-/* Both links pinned to 7.5 ms (6 * 1.25 ms), no slave latency, 4 s supervision.
- * Auto param update is disabled (prj.conf) so the intervals stay put and the two
- * events keep beating against each other.
+/* Real parameters read straight out of the zmk#3370 coredump (lll_conn structs):
+ *   host link  (DUT=peripheral, to the computer): 15 ms, latency 30
+ *   split link (DUT=central, to the peripheral):  7.5 ms, latency 30
+ * Different intervals (2:1) is how it actually runs. The collision DRIVER is the
+ * ~+-40 ppm crystal-drift difference between the keyboard's clock (which drives
+ * the split link, DUT=central) and the host's clock (which drives the host link,
+ * DUT=peripheral): over ~70 s the two anchors sweep into periodic collision, the
+ * controller defers events, and the buggy dequeue leaks duplicate prepares.
+ * bsim has ZERO drift by default (xo_drift=0), so the launch script must set a
+ * per-device -xo_drift to reproduce the sweep (exaggerated to collide fast).
+ * Auto param update is disabled (prj.conf) so the intervals stay put.
  */
-#define CONN_INTERVAL_UNITS 6U   /* 7.5 ms */
-#define CONN_LATENCY        0U
-#define CONN_TIMEOUT_UNITS  400U /* 4 s (10 ms units) */
+#define SPLIT_INTERVAL_UNITS 6U   /* 7.5 ms (DUT is central here) */
+#define HOST_INTERVAL_UNITS  12U  /* 15 ms  (DUT is peripheral here) */
+#define CONN_LATENCY         30U
+#define CONN_TIMEOUT_UNITS   400U /* 4 s (10 ms units) */
 
 /* Advertised names, so each scanner connects to the right peer. */
 #define DUT_NAME   "bsim_dut"

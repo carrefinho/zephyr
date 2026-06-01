@@ -96,7 +96,8 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 		scanning = false;
 	}
 
-	param = BT_LE_CONN_PARAM(CONN_INTERVAL_UNITS, CONN_INTERVAL_UNITS,
+	/* DUT is CENTRAL on the split link: 7.5 ms, latency 30 (matches the dump). */
+	param = BT_LE_CONN_PARAM(SPLIT_INTERVAL_UNITS, SPLIT_INTERVAL_UNITS,
 				 CONN_LATENCY, CONN_TIMEOUT_UNITS);
 	err = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN, param, &split_conn);
 	if (err) {

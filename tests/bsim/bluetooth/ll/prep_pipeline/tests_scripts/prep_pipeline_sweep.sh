@@ -14,8 +14,10 @@
 
 source "${ZEPHYR_BASE}/tests/bsim/sh_common.source"
 
-seeds="${SEEDS:-$(seq 1 12)}"
-export SIM_US="${SIM_US:-30e6}"
+# With the xo_drift sweep forcing collisions, a repro no longer depends on luck,
+# so a few seeds (varying the initial phase) over a longer sim suffice.
+seeds="${SEEDS:-1 2 3 4 5}"
+export SIM_US="${SIM_US:-60e6}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 for s in ${seeds}; do

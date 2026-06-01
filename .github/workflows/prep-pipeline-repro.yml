@@ -45,6 +45,25 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Resolve west topdir
+        run: echo "WEST_TOPDIR=$(realpath "$GITHUB_WORKSPACE/..")" >> "$GITHUB_ENV"
+
+      - name: Cache west modules
+        uses: actions/cache@v5
+        env:
+          cache-name: cache-zephyr-modules
+        with:
+          path: |
+            ${{ env.WEST_TOPDIR }}/modules
+            ${{ env.WEST_TOPDIR }}/tools
+            ${{ env.WEST_TOPDIR }}/bootloader
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('west.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+        timeout-minutes: 5
+        continue-on-error: true
+
       - name: West init + update
         run: |
           west init -l . || true
@@ -66,8 +85,8 @@ jobs:
         shell: bash
         run: |
           export ZEPHYR_BASE="${PWD}"
-          export SEEDS="$(seq 1 16)"
-          export SIM_US=30e6
+          export SEEDS="1 2 3 4 5"
+          export SIM_US=60e6
           tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh
 
       - name: Upload logs

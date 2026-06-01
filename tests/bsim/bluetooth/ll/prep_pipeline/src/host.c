@@ -78,7 +78,10 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 
 	(void)bt_le_scan_stop();
 
-	param = BT_LE_CONN_PARAM(CONN_INTERVAL_UNITS, CONN_INTERVAL_UNITS,
+	/* Host is CENTRAL on the host link: 15 ms, latency 30 (matches the dump).
+	 * The 15 ms vs the split's 7.5 ms + per-device xo_drift makes the DUT's two
+	 * events sweep into collision. */
+	param = BT_LE_CONN_PARAM(HOST_INTERVAL_UNITS, HOST_INTERVAL_UNITS,
 				 CONN_LATENCY, CONN_TIMEOUT_UNITS);
 	err = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN, param, &dut_conn);
 	if (err) {
