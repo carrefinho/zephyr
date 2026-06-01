@@ -1,0 +1,85 @@
+# Deterministic bsim reproduction of the ZMK split-central prepare-pipeline
+# overflow crash: LL_ASSERT(next) @ ll_sw/nordic/lll/lll.c (zmkfirmware/zmk#3370).
+#
+# Runs the same nRF52 LL_SW controller as the real firmware on the nrf52_bsim HW
+# model. A dual-role DUT (peripheral to `host` + central to `split`, like a ZMK
+# central) drives two saturated 7.5 ms links so their events overlap, exercising
+# the LL_SW preempt/duplicate-prepare path until the prepare pipeline (shrunk to
+# 3 via the accel overlay) overflows and the controller asserts.
+#
+# Green = the overflow reproduced (the sweep found a seed that asserts). The
+# logs artifact carries the "ASSERTION FAIL [next] @ .../lll.c" line.
+#
+# A/B against the fix (93b951d + 0d1b4d2) is in the test README - cherry-pick
+# them onto this branch and the same sweep should report NO_OVERFLOW.
+name: Prep-Pipeline Overflow Repro
+
+on:
+  push:
+    branches:
+      - "bsim-prep-pipeline-repro"
+  workflow_dispatch:
+
+jobs:
+  reproduce-bsim:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/zephyrproject-rtos/ci-repo-cache:v0.27.4.20241026
+      options: "--entrypoint /bin/bash"
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+      BSIM_OUT_PATH: /opt/bsim/
+      BSIM_COMPONENTS_PATH: /opt/bsim/components
+      BOARD: nrf52_bsim
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Clone cached Zephyr repository (speeds up checkout/update)
+        continue-on-error: true
+        run: |
+          git clone --shared /repo-cache/zephyrproject/zephyr .
+          git remote set-url origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: West init + update
+        run: |
+          west init -l . || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update --path-cache /repo-cache/zephyrproject 1> west.update.log 2>&1 \
+            || west update 1> west.update.log 2>&1
+          west forall -c 'git reset --hard HEAD'
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
+
+      - name: Compile prep_pipeline bsim app (accelerated: EVENT_PIPELINE_MAX=3)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+          app=tests/bsim/bluetooth/ll/prep_pipeline conf_overlay=overlay_accel.conf compile
+          wait_for_background_jobs
+
+      - name: Sweep seeds until the prepare pipeline overflows
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export SEEDS="$(seq 1 16)"
+          export SIM_US=30e6
+          tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prep-pipeline-repro-logs
+          path: |
+            /opt/bsim/bin/prep_pipe_*.log
+            west.update.log
+          if-no-files-found: ignore

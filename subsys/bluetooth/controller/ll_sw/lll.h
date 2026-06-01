@@ -14,7 +14,12 @@
 #define TICKER_USER_ID_ULL_LOW  MAYFLY_CALL_ID_2
 #define TICKER_USER_ID_THREAD   MAYFLY_CALL_ID_PROGRAM
 
+/* prep-pipeline repro: allow a build-time override (-DEVENT_PIPELINE_MAX=N) to
+ * shrink the prepare pipeline so the duplicate-prepare leak overflows fast.
+ * Default (7) is unchanged. See tests/bsim/bluetooth/ll/prep_pipeline. */
+#ifndef EVENT_PIPELINE_MAX
 #define EVENT_PIPELINE_MAX 7
+#endif
 
 #define ADV_INT_UNIT_US          625U
 #define SCAN_INT_UNIT_US         625U
