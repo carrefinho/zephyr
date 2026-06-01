@@ -58,7 +58,7 @@ jobs:
           west forall -c 'git reset --hard HEAD'
           echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
 
-      - name: Compile prep_pipeline bsim app (accelerated: EVENT_PIPELINE_MAX=3)
+      - name: "Compile prep_pipeline bsim app (accelerated: EVENT_PIPELINE_MAX=3)"
         shell: bash
         run: |
           export ZEPHYR_BASE="${PWD}"
