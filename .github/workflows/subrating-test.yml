@@ -66,6 +66,12 @@ jobs:
           west forall -c 'git reset --hard HEAD'
           echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
 
+      # ci-base ships no Zephyr SDK (the full ci image no longer fits
+      # GitHub-hosted runner disks); install just the host toolchain, which
+      # also satisfies CMake's FindZephyr-sdk for unit_testing.
+      - name: Install Zephyr SDK (host toolchain only)
+        run: west sdk install -b /opt/toolchains -t x86_64-zephyr-elf
+
       - name: Run ctrl_subrate unit test
         run: |
           export ZEPHYR_BASE="${PWD}"
@@ -86,17 +92,16 @@ jobs:
           if-no-files-found: ignore
 
   # BabbleSim radio-level validation of the Phase 2 peripheral event-skipping.
-  # The CI image ships a pre-built BabbleSim at /opt/bsim, so we only compile the
-  # subrating scenario and run it (no in-workspace babblesim modules needed).
+  # The full ci image (pre-built bsim + all SDK toolchains) no longer fits
+  # GitHub-hosted runner disks, so use ci-base, install the host SDK toolchain,
+  # and build BabbleSim from the west babblesim group (cached under tools/).
   ctrl-subrate-bsim:
     runs-on: ubuntu-22.04
     container:
-      image: ghcr.io/zephyrproject-rtos/ci:v0.29.1
+      image: ghcr.io/zephyrproject-rtos/ci-base:v0.29.1
       options: "--entrypoint /bin/bash"
     env:
       ZEPHYR_TOOLCHAIN_VARIANT: zephyr
-      BSIM_OUT_PATH: /opt/bsim/
-      BSIM_COMPONENTS_PATH: /opt/bsim/components
     steps:
       - name: Apply container owner mismatch workaround
         run: git config --global --add safe.directory '*'
@@ -129,11 +134,20 @@ jobs:
       - name: West init + update
         run: |
           west init -l . || true
-          west config manifest.group-filter -- +ci,+optional
+          west config manifest.group-filter -- +ci,+optional,+babblesim
           west config --global update.narrow true
           west update 1> west.update.log 2>&1
           west forall -c 'git reset --hard HEAD'
           echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
+
+      - name: Install Zephyr SDK (host toolchain only)
+        run: west sdk install -b /opt/toolchains -t x86_64-zephyr-elf
+
+      - name: Build BabbleSim
+        run: |
+          make -C "${WEST_TOPDIR}/tools/bsim" everything -j"$(nproc)"
+          echo "BSIM_OUT_PATH=${WEST_TOPDIR}/tools/bsim/" >> "$GITHUB_ENV"
+          echo "BSIM_COMPONENTS_PATH=${WEST_TOPDIR}/tools/bsim/components" >> "$GITHUB_ENV"
 
       - name: Compile subrating bsim scenario (nRF52)
         shell: bash
