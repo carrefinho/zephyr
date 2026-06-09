@@ -26,7 +26,7 @@ jobs:
   ctrl-subrate-unit:
     runs-on: ubuntu-22.04
     container:
-      image: docker.io/zephyrprojectrtos/ci:v0.27.4
+      image: ghcr.io/zephyrproject-rtos/ci-base:v0.29.1
       options: "--entrypoint /bin/bash"
     steps:
       - name: Apply container owner mismatch workaround
@@ -91,7 +91,7 @@ jobs:
   ctrl-subrate-bsim:
     runs-on: ubuntu-22.04
     container:
-      image: docker.io/zephyrprojectrtos/ci:v0.27.4
+      image: ghcr.io/zephyrproject-rtos/ci:v0.29.1
       options: "--entrypoint /bin/bash"
     env:
       ZEPHYR_TOOLCHAIN_VARIANT: zephyr
