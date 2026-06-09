@@ -43,9 +43,9 @@ LOG_MODULE_REGISTER(sci_latency, LOG_LEVEL_INF);
 #define SCI_TIMEOUT_10MS        200U
 #define SUBRATE_TIMEOUT_10MS    200U
 
-static struct bt_conn *default_conn;
-
 #if defined(CONFIG_SCI_LATENCY_CENTRAL)
+
+static struct bt_conn *default_conn;
 
 static const uint16_t sweep_factors[] = { 1U, 2U, 4U, 8U };
 #define READS_PER_FACTOR   10
