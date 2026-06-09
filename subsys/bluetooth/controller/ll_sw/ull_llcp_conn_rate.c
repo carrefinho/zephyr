@@ -170,7 +170,7 @@ enum {
  * range, so this checks the subrate fields and the supervision-timeout vs the
  * requested (new) interval relationship. Returns true if acceptable.
  */
-static bool conn_rate_req_acceptable(struct ll_conn *conn, struct proc_ctx *ctx)
+static bool __maybe_unused conn_rate_req_acceptable(struct ll_conn *conn, struct proc_ctx *ctx)
 {
 	const uint16_t interval_max = ctx->data.conn_rate.interval_max;
 	const uint16_t sf_min = ctx->data.conn_rate.subrate_factor_min;
@@ -209,7 +209,7 @@ static bool conn_rate_req_acceptable(struct ll_conn *conn, struct proc_ctx *ctx)
  * checked). Picks the largest acceptable subrate factor for maximum power
  * saving, like subrate_ind_params_calc.
  */
-static void conn_rate_ind_params_calc(struct ll_conn *conn, struct proc_ctx *ctx)
+static void __maybe_unused conn_rate_ind_params_calc(struct ll_conn *conn, struct proc_ctx *ctx)
 {
 	uint16_t factor = ctx->data.conn_rate.subrate_factor_max;
 	uint16_t latency = ctx->data.conn_rate.max_latency;
