@@ -152,10 +152,12 @@ jobs:
             case "$d" in */common/) continue ;; esac
             [ -e "${d}Depends" ] || { echo "removing stale bsim component ${d}"; rm -rf "${d}"; }
           done
+          export BSIM_OUT_PATH="${WEST_TOPDIR}/tools/bsim/"
+          export BSIM_COMPONENTS_PATH="${WEST_TOPDIR}/tools/bsim/components"
           make -C "${WEST_TOPDIR}/tools/bsim" everything -j"$(nproc)"
-          test -f "${WEST_TOPDIR}/tools/bsim/lib/bs_2G4_phy_v1.version"
-          echo "BSIM_OUT_PATH=${WEST_TOPDIR}/tools/bsim/" >> "$GITHUB_ENV"
-          echo "BSIM_COMPONENTS_PATH=${WEST_TOPDIR}/tools/bsim/components" >> "$GITHUB_ENV"
+          test -f "${BSIM_OUT_PATH}/lib/bs_2G4_phy_v1.version"
+          echo "BSIM_OUT_PATH=${BSIM_OUT_PATH}" >> "$GITHUB_ENV"
+          echo "BSIM_COMPONENTS_PATH=${BSIM_COMPONENTS_PATH}" >> "$GITHUB_ENV"
 
       - name: Compile subrating bsim scenario (nRF52)
         shell: bash
