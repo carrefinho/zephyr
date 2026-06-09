@@ -141,7 +141,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 }
 
 static void read_all_remote_feat_complete(struct bt_conn *conn,
-					  struct bt_conn_le_read_all_remote_feat_complete *params)
+					  const struct bt_conn_le_read_all_remote_feat_complete *params)
 {
 	k_sem_give(&sem_feat);
 }
