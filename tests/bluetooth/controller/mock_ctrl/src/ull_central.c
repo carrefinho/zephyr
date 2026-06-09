@@ -35,6 +35,13 @@ uint8_t ull_central_chm_update(void)
 	return 0;
 }
 
+#if defined(CONFIG_BT_CTLR_SUBRATING)
+struct ll_conn;
+void ull_central_latency_cancel(struct ll_conn *conn, uint16_t handle)
+{
+}
+#endif /* CONFIG_BT_CTLR_SUBRATING */
+
 
 int ull_central_reset(void)
 {
