@@ -146,7 +146,10 @@ jobs:
           # A restored cache can carry component dirs dropped from the
           # manifest (e.g. 4.1-era ext_2G4_device_playbackv2); they abort
           # the bsim build, so drop any component without a Depends file.
+          # components/common is shared make infra (the top-level Makefile
+          # is a symlink into it) and legitimately has no Depends -- keep it.
           for d in "${WEST_TOPDIR}"/tools/bsim/components/*/; do
+            case "$d" in */common/) continue ;; esac
             [ -e "${d}Depends" ] || { echo "removing stale bsim component ${d}"; rm -rf "${d}"; }
           done
           make -C "${WEST_TOPDIR}/tools/bsim" everything -j"$(nproc)"
