@@ -209,9 +209,11 @@ static void test_con2_main(void)
 	 * of starting delayed work so we do it here
 	 */
 	while (1) {
-		if (IS_ENABLED(CONFIG_TEST_CONN_INTERVAL_1MS) ||
-		    IS_ENABLED(CONFIG_TEST_CONN_INTERVAL_500US) ||
-		    IS_ENABLED(CONFIG_BT_CTLR_TX_DEFER)) {
+		if (IS_ENABLED(CONFIG_TEST_CONN_INTERVAL_500US)) {
+			/* one notification per ~500 us connection event */
+			k_sleep(K_USEC(500));
+		} else if (IS_ENABLED(CONFIG_TEST_CONN_INTERVAL_1MS) ||
+			   IS_ENABLED(CONFIG_BT_CTLR_TX_DEFER)) {
 			k_sleep(K_MSEC(1));
 		} else {
 			k_sleep(K_SECONDS(1));

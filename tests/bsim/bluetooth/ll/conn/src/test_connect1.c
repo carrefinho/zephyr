@@ -156,16 +156,27 @@ static uint8_t notify_func(struct bt_conn *conn,
 	delta = k_cyc_to_ns_floor64(delta);
 
 	/*
-	 * In the low-latency modes the peripheral notifies every 1 ms, so only
-	 * count notifications that land within ~1 ms of the previous one. The
-	 * negotiated sub-7.5 ms interval itself is checked in params_updated().
+	 * In the low-latency modes the peripheral notifies once per connection
+	 * event, so only count notifications whose spacing matches the negotiated
+	 * interval: ~1 ms (1MS) or ~500 us (500US). This makes the notification
+	 * cadence a direct, on-air check that the connection events really happen
+	 * at the requested sub-7.5 ms interval -- a 1 ms link cannot deliver
+	 * 500 us-spaced notifications, so the 500US test would time out and FAIL.
+	 * (The negotiated value itself is also checked in params_updated().)
 	 */
-	if ((!IS_ENABLED(CONFIG_TEST_CONN_INTERVAL_1MS) &&
-	     !IS_ENABLED(CONFIG_TEST_CONN_INTERVAL_500US)) ||
-	    ((delta > (NSEC_PER_MSEC / 2U)) &&
-	     (delta < (NSEC_PER_MSEC + (NSEC_PER_MSEC / 2U))))) {
+#if defined(CONFIG_TEST_CONN_INTERVAL_500US)
+	if ((delta > (NSEC_PER_MSEC / 4U)) &&             /* 250 us */
+	    (delta < ((3U * NSEC_PER_MSEC) / 4U))) {      /* 750 us */
 		notify_count++;
 	}
+#elif defined(CONFIG_TEST_CONN_INTERVAL_1MS)
+	if ((delta > (NSEC_PER_MSEC / 2U)) &&             /* 500 us */
+	    (delta < (NSEC_PER_MSEC + (NSEC_PER_MSEC / 2U)))) { /* 1500 us */
+		notify_count++;
+	}
+#else
+	notify_count++;
+#endif
 
 	printk("[NOTIFICATION] %u. data %p length %u in %llu ns\n",
 	       notify_count, data, length, delta);
