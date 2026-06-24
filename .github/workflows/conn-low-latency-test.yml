@@ -1,0 +1,164 @@
+# CI for the sub-7.5 ms low-latency BLE connection mode (zmkfirmware/zmk#3381).
+#
+# This exercises the *upstream* low-latency split-controller feature
+# (CONFIG_BT_CTLR_CONN_INTERVAL_LOW_LATENCY + CONFIG_BT_CONN_PARAM_ANY), NOT the
+# custom SCI Connection-Rate procedure. It reuses the in-tree conn bsim test:
+# a central connects to a peripheral, requests a sub-7.5 ms interval via a
+# connection-parameter update, and the central FAILs unless the controller
+# reports back exactly that interval (1 -> 1 ms, 0 -> 500 us) and then sustains
+# ~3000 notifications at the negotiated rate.
+#
+#   prj_split_1ms.conf   -> interval value 1  = 1 ms    (upstream test config)
+#   prj_split_500us.conf -> interval value 0  = 500 us  (adds ASSERT_OVERHEAD_START=n)
+#
+# Two LL_SW devices in BabbleSim, on both the nRF52 (separate radio timers) and
+# the nRF54L15 (single radio timer) bsim targets. nRF54L is the primary ZMK SoC
+# and the harder case: the single-timer event-overhead path is what the in-tree
+# fixes (6e8f081385e/e94d9c78117, already on this base) address, and 500 us is
+# where it bites first -- hence ASSERT_OVERHEAD_START=n on the 500 us config.
+name: Low Latency Connection (bsim)
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+jobs:
+  low-latency-nrf52:
+    runs-on: ubuntu-22.04
+    container:
+      image: docker.io/zephyrprojectrtos/ci:v0.27.4
+      options: "--entrypoint /bin/bash"
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+      BSIM_OUT_PATH: /opt/bsim/
+      BSIM_COMPONENTS_PATH: /opt/bsim/components
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve west topdir
+        run: echo "WEST_TOPDIR=$(realpath "$GITHUB_WORKSPACE/..")" >> "$GITHUB_ENV"
+
+      - name: Cache west modules
+        uses: actions/cache@v5
+        env:
+          cache-name: cache-zephyr-modules
+        with:
+          path: |
+            ${{ env.WEST_TOPDIR }}/modules
+            ${{ env.WEST_TOPDIR }}/tools
+            ${{ env.WEST_TOPDIR }}/bootloader
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('west.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+        timeout-minutes: 5
+        continue-on-error: true
+
+      - name: West init + update
+        run: |
+          west init -l . || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update 1> west.update.log 2>&1
+          west forall -c 'git reset --hard HEAD'
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
+
+      - name: Compile conn low-latency variants (nRF52)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+          app=tests/bsim/bluetooth/ll/conn conf_file=prj_split_1ms.conf compile
+          app=tests/bsim/bluetooth/ll/conn conf_file=prj_split_500us.conf compile
+          wait_for_background_jobs
+
+      - name: Run the 1 ms connection scenario (nRF52 bsim)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=120
+          tests/bsim/bluetooth/ll/conn/tests_scripts/basic_conn_split_1ms.sh
+
+      - name: Run the 500 us connection scenario (nRF52 bsim)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=120
+          tests/bsim/bluetooth/ll/conn/tests_scripts/basic_conn_split_500us.sh
+
+  # Same scenarios on the nRF54L15 bsim target -- the primary ZMK SoC and the
+  # single-radio-timer case the sub-7.5 ms interval stresses. BOARD drives both
+  # the build and the run scripts (BOARD_TS is derived from it in sh_common).
+  low-latency-nrf54l:
+    runs-on: ubuntu-22.04
+    container:
+      image: docker.io/zephyrprojectrtos/ci:v0.27.4
+      options: "--entrypoint /bin/bash"
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+      BSIM_OUT_PATH: /opt/bsim/
+      BSIM_COMPONENTS_PATH: /opt/bsim/components
+      BOARD: nrf54l15bsim/nrf54l15/cpuapp
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve west topdir
+        run: echo "WEST_TOPDIR=$(realpath "$GITHUB_WORKSPACE/..")" >> "$GITHUB_ENV"
+
+      - name: Cache west modules
+        uses: actions/cache@v5
+        env:
+          cache-name: cache-zephyr-modules
+        with:
+          path: |
+            ${{ env.WEST_TOPDIR }}/modules
+            ${{ env.WEST_TOPDIR }}/tools
+            ${{ env.WEST_TOPDIR }}/bootloader
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('west.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+        timeout-minutes: 5
+        continue-on-error: true
+
+      - name: West init + update
+        run: |
+          west init -l . || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update 1> west.update.log 2>&1
+          west forall -c 'git reset --hard HEAD'
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
+
+      - name: Compile conn low-latency variants (nRF54L)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+          app=tests/bsim/bluetooth/ll/conn conf_file=prj_split_1ms.conf compile
+          app=tests/bsim/bluetooth/ll/conn conf_file=prj_split_500us.conf compile
+          wait_for_background_jobs
+
+      - name: Run the low-latency scenarios (nRF54L bsim)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=120
+          tests/bsim/bluetooth/ll/conn/tests_scripts/basic_conn_split_1ms.sh
+          tests/bsim/bluetooth/ll/conn/tests_scripts/basic_conn_split_500us.sh

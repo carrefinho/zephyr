@@ -6,6 +6,12 @@ config TEST_CONN_INTERVAL_1MS
 	help
 	  Test 1 ms connection interval support.
 
+config TEST_CONN_INTERVAL_500US
+	bool "Test 500 us connection interval support"
+	help
+	  Test 500 us connection interval support, i.e. the low-latency
+	  connection interval value 0 (500 us steps below interval value 6).
+
 menu "Zephyr Kernel"
 source "Kconfig.zephyr"
 endmenu

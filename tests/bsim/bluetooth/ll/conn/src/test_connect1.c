@@ -29,7 +29,13 @@ static struct bt_uuid_16 uuid = BT_UUID_INIT_16(0);
 static struct bt_gatt_discover_params discover_params;
 static struct bt_gatt_subscribe_params subscribe_params;
 
-#if defined(CONFIG_TEST_CONN_INTERVAL_1MS)
+#if defined(CONFIG_TEST_CONN_INTERVAL_500US)
+#define UPDATE_PARAM_INTERVAL_MIN 0
+#define UPDATE_PARAM_INTERVAL_MAX 0
+#define UPDATE_PARAM_LATENCY      0
+#define UPDATE_PARAM_TIMEOUT      10
+#define TEST_NOTIFY_COUNT         3000
+#elif defined(CONFIG_TEST_CONN_INTERVAL_1MS)
 #define UPDATE_PARAM_INTERVAL_MIN 1
 #define UPDATE_PARAM_INTERVAL_MAX 1
 #define UPDATE_PARAM_LATENCY      0
@@ -149,7 +155,13 @@ static uint8_t notify_func(struct bt_conn *conn,
 	cycle_stamp = cycle_now;
 	delta = k_cyc_to_ns_floor64(delta);
 
-	if (!IS_ENABLED(CONFIG_TEST_CONN_INTERVAL_1MS) ||
+	/*
+	 * In the low-latency modes the peripheral notifies every 1 ms, so only
+	 * count notifications that land within ~1 ms of the previous one. The
+	 * negotiated sub-7.5 ms interval itself is checked in params_updated().
+	 */
+	if ((!IS_ENABLED(CONFIG_TEST_CONN_INTERVAL_1MS) &&
+	     !IS_ENABLED(CONFIG_TEST_CONN_INTERVAL_500US)) ||
 	    ((delta > (NSEC_PER_MSEC / 2U)) &&
 	     (delta < (NSEC_PER_MSEC + (NSEC_PER_MSEC / 2U))))) {
 		notify_count++;
