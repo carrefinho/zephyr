@@ -1434,6 +1434,16 @@ config BT_CTLR_TEST_CONN_EVENT_COUNT
 	  the subrate skip is honored and the link is not bursting to full rate).
 	  Not for production use.
 
+config BT_CTLR_TEST_CONN_TICKS_SLOT
+	bool "Expose the connection slot reservation for testing"
+	help
+	  Test-only instrumentation: expose, per connection, the current
+	  ull.ticks_slot scheduler reservation (in ticker ticks) via the
+	  ll_test_conn_ticks_slot[] array, so a bsim test can observe the slot
+	  before and after an update (e.g. that a Frame Space Update shrinks the
+	  reservation to match the shorter inter-frame space -- FSU's whole value).
+	  Not for production use.
+
 config BT_CTLR_DEBUG_PINS
 	bool "Bluetooth Controller Debug Pins"
 	depends on BOARD_NRF51DK_NRF51822 || BOARD_NRF52DK_NRF52832 || BOARD_NRF52DK_NRF52810 || BOARD_NRF52840DK_NRF52840 || BOARD_NRF52833DK_NRF52833 || BOARD_NRF5340DK_NRF5340_CPUNET || BOARD_RV32M1_VEGA

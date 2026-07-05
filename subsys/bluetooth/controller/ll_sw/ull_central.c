@@ -751,6 +751,17 @@ void ull_central_setup(struct node_rx_pdu *rx, struct node_rx_ftr *ftr,
 	lll->handle = ll_conn_handle_get(conn);
 	rx->hdr.handle = lll->handle;
 
+#if defined(CONFIG_BT_CTLR_TEST_CONN_TICKS_SLOT)
+	/* Publish the initial slot reservation (computed in ll_create_connection
+	 * before the handle existed) now that the handle is assigned, so a bsim
+	 * test has a "before" baseline to compare against once a Frame Space
+	 * Update shrinks it. Not for production use.
+	 */
+	if (lll->handle < CONFIG_BT_MAX_CONN) {
+		ll_test_conn_ticks_slot[lll->handle] = conn->ull.ticks_slot;
+	}
+#endif /* CONFIG_BT_CTLR_TEST_CONN_TICKS_SLOT */
+
 	/* Set LLCP as connection-wise connected */
 	ull_cp_state_set(conn, ULL_CP_CONNECTED);
 

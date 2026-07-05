@@ -44,6 +44,14 @@ extern enum bst_result_t bst_result;
 extern volatile uint32_t ll_test_conn_event_count[];
 #endif
 
+#if defined(CONFIG_BT_CTLR_TEST_CONN_TICKS_SLOT)
+/* Controller (ull_conn.c) per-connection scheduler slot reservation (ticker
+ * ticks). Same binary in bsim, so this links directly. Used by central_fsu to
+ * prove a Frame Space Update actually shrinks the reservation.
+ */
+extern volatile uint32_t ll_test_conn_ticks_slot[];
+#endif
+
 #define FAIL(...)					\
 	do {						\
 		bst_result = Failed;			\
@@ -1309,11 +1317,13 @@ static void test_central_main_efs(void)
  * The responder (the peripheral controller) negotiates a frame space clamped to
  * its configured floor (CONFIG_BT_CTLR_FSU_MIN_FRAME_SPACE_US = 80 us in
  * overlay-fsu): a request for FS_Min = 60 us is granted as exactly 80 us. The
- * procedure is control-plane-only on this fork (frame_space_apply is a stub,
- * TODO(fsu-radio) -- the negotiated tIFS is reported but the radio is not
- * retimed yet), so the link MUST survive an FSU; a drop would mean an FSM bug,
- * not a radio timing change. A second request whose entire range sits below the
- * floor (FS_Max = 70 < 80) must be rejected (BT_HCI_ERR_UNSUPP_FEATURE_PARAM_VAL,
+ * apply then retimes the radio (shorter tIFS) and shrinks the scheduler slot
+ * reservation -- FSU's whole value -- which the test proves by observing
+ * ll_test_conn_ticks_slot[] strictly decrease across the exchange (needs
+ * CONFIG_BT_CTLR_TEST_CONN_TICKS_SLOT, set in overlay-fsu). On the idealized
+ * bsim radio the link MUST survive the retiming; a drop would mean an FSM or
+ * timing bug. A second request whose entire range sits below the floor
+ * (FS_Max = 70 < 80) must be rejected (BT_HCI_ERR_UNSUPP_FEATURE_PARAM_VAL,
  * 0x11), never clamped below the floor.
  *
  * The peer is peripheral_plain: the controller answers the LL_FRAME_SPACE_REQ as
@@ -1364,6 +1374,10 @@ static void test_central_main_fsu(void)
 			BT_HCI_LE_FRAME_SPACE_UPDATE_SPACING_TYPE_IFS_ACL_PC_MASK,
 	};
 	int err;
+#if defined(CONFIG_BT_CTLR_TEST_CONN_TICKS_SLOT)
+	uint32_t slot_before, slot_after;
+	uint16_t fsu_handle;
+#endif
 
 	bt_conn_cb_register(&fsu_conn_callbacks);
 
@@ -1392,6 +1406,21 @@ static void test_central_main_fsu(void)
 	}
 	SUBRATE_WAIT(efs_complete);
 	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+#if defined(CONFIG_BT_CTLR_TEST_CONN_TICKS_SLOT)
+	/* Record the scheduler slot reservation at the established default 150 us
+	 * inter-frame space, before the FSU shortens it. The link is a normal
+	 * (non-reduced-CE) link, so the reservation is the full airtime slot and a
+	 * 150->80 us tIFS drop (70 us, several ticker ticks) must shrink it.
+	 */
+	if (bt_hci_get_conn_handle(default_conn, &fsu_handle)) {
+		FAIL("Could not read the FSU connection handle\n");
+		return;
+	}
+	slot_before = ll_test_conn_ticks_slot[fsu_handle];
+	printk("FSU slot reservation before update: %u ticks (handle %u)\n",
+	       slot_before, fsu_handle);
+#endif /* CONFIG_BT_CTLR_TEST_CONN_TICKS_SLOT */
 
 	/* Request a frame space; FS_Min = 60 us is below the responder's 80 us
 	 * floor, so the negotiated value must clamp up to exactly 80 us.
@@ -1423,15 +1452,36 @@ static void test_central_main_fsu(void)
 	printk("Central frame space negotiated at %u us (floor-clamped from %u)\n",
 	       fsu_frame_space, param.frame_space_min);
 
-	/* Control-plane-only: no radio retiming, so the link must be unaffected.
-	 * Hold it to confirm it survives (an FSM bug would desync / drop it).
+	/* The apply retimes the radio (shorter tIFS) and shrinks the slot; on the
+	 * idealized bsim radio the link must still survive (an FSM/timing bug would
+	 * desync / drop it). Hold it to let the shorter event run and the
+	 * ull_conn_done slot recompute settle over many connection events.
 	 */
 	k_sleep(K_MSEC(2000));
 	if (!central_connected || !default_conn) {
-		FAIL("Link dropped after the frame space update (the control-plane "
-		     "stub must not change radio timing)\n");
+		FAIL("Link dropped after the frame space update (the shorter "
+		     "inter-frame space must not desync the link)\n");
 		return;
 	}
+
+#if defined(CONFIG_BT_CTLR_TEST_CONN_TICKS_SLOT)
+	/* Prove FSU's value: the shorter inter-frame space must have shrunk the
+	 * scheduler slot reservation. The 70 us tIFS drop (150 -> 80) exceeds one
+	 * HAL_TICKER_US_TO_TICKS_CEIL boundary, so on this normal (full-slot) link
+	 * the recomputed reservation must be STRICTLY smaller than before.
+	 */
+	slot_after = ll_test_conn_ticks_slot[fsu_handle];
+	printk("FSU slot reservation after update: %u ticks (was %u)\n",
+	       slot_after, slot_before);
+	if (slot_after >= slot_before) {
+		FAIL("Slot reservation did not shrink after FSU: before %u, after %u "
+		     "ticks (150->80 us tIFS should shorten the event)\n",
+		     slot_before, slot_after);
+		return;
+	}
+	printk("FSU slot reservation shrank: %u -> %u ticks\n", slot_before,
+	       slot_after);
+#endif /* CONFIG_BT_CTLR_TEST_CONN_TICKS_SLOT */
 
 	/* A request whose entire range is below the floor (FS_Max = 70 < 80) must
 	 * be rejected by the responder, not clamped below the floor. The host range
@@ -1469,8 +1519,8 @@ static void test_central_main_fsu(void)
 	}
 
 	(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-	PASS("Central FSU validated: 60->80 us floor clamp accepted, below-floor "
-	     "{40,70} rejected, link survived (control-plane)\n");
+	PASS("Central FSU validated: 60->80 us floor clamp accepted, slot "
+	     "reservation shrank, below-floor {40,70} rejected, link survived\n");
 }
 #endif /* CONFIG_BT_FRAME_SPACE_UPDATE */
 
@@ -2364,8 +2414,8 @@ static const struct bst_test_instance test_central[] = {
 		.test_id = "central_fsu",
 		.test_descr = "Central: Frame Space Update (Core 6.2) - exchange page 1 "
 			      "then negotiate a frame space; the responder clamps to its "
-			      "80 us floor, a below-floor request is rejected, and the "
-			      "link survives (control-plane only).",
+			      "80 us floor, the slot reservation shrinks, a below-floor "
+			      "request is rejected, and the link survives.",
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_fsu,

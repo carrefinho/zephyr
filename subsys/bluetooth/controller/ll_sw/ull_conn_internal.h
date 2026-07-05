@@ -49,6 +49,16 @@ uint8_t ull_conn_llcp_req(void *conn);
 
 void ull_pdu_data_init(struct pdu_data *pdu);
 
+#if defined(CONFIG_BT_CTLR_TEST_CONN_TICKS_SLOT)
+/* Test-only: per-connection scheduler slot reservation (ull.ticks_slot, in
+ * ticker ticks). Defined in ull_conn.c; the initial reservation is published
+ * from the role setup paths (ull_central_setup / ull_peripheral_setup) once the
+ * handle is assigned, and each recompute from ull_conn_done, so a bsim test can
+ * read a before/after value.
+ */
+extern volatile uint32_t ll_test_conn_ticks_slot[];
+#endif /* CONFIG_BT_CTLR_TEST_CONN_TICKS_SLOT */
+
 #if defined(CONFIG_BT_CTLR_CONN_PARAM_REQ)
 /* Connection context pointer used as CPR mutex to serialize connection
  * parameter requests procedures across simultaneous connections so that

@@ -88,6 +88,14 @@ LOG_MODULE_REGISTER(bt_ctlr_ull_conn);
 volatile uint32_t ll_test_conn_event_count[CONFIG_BT_MAX_CONN];
 #endif
 
+#if defined(CONFIG_BT_CTLR_TEST_CONN_TICKS_SLOT)
+/* Test-only: per-connection scheduler slot reservation (ull.ticks_slot, in
+ * ticker ticks), published whenever the reservation is (re)computed. Lets a
+ * bsim test observe the slot shrink after an update (e.g. a Frame Space Update
+ * shortening the inter-frame space); see Kconfig.
+ */
+volatile uint32_t ll_test_conn_ticks_slot[CONFIG_BT_MAX_CONN];
+#endif
 
 /* A Shorter Connection Intervals (RCV) link uses the 1.25 ms interval grid with
  * standard 150 us tIFS even for intervals below BT_HCI_LE_INTERVAL_MIN (7.5 ms),
@@ -1805,6 +1813,16 @@ void ull_conn_done(struct node_rx_event_done *done)
 			ticks_slot_minus = conn->ull.ticks_slot - ticks_slot;
 		}
 		conn->ull.ticks_slot = ticks_slot;
+
+#if defined(CONFIG_BT_CTLR_TEST_CONN_TICKS_SLOT)
+		/* Publish the recomputed reservation (the "after" value: a Frame
+		 * Space Update sets evt_len_upd, so this reflects the shorter
+		 * inter-frame space). Handle is valid here (checked at entry).
+		 */
+		if (lll->handle < CONFIG_BT_MAX_CONN) {
+			ll_test_conn_ticks_slot[lll->handle] = conn->ull.ticks_slot;
+		}
+#endif /* CONFIG_BT_CTLR_TEST_CONN_TICKS_SLOT */
 	}
 #endif /* CONFIG_BT_CTLR_DATA_LENGTH || CONFIG_BT_CTLR_PHY */
 #else /* CONFIG_BT_CTLR_SLOT_RESERVATION_UPDATE */
