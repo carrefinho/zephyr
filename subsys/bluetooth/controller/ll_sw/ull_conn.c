@@ -88,6 +88,7 @@ LOG_MODULE_REGISTER(bt_ctlr_ull_conn);
 volatile uint32_t ll_test_conn_event_count[CONFIG_BT_MAX_CONN];
 #endif
 
+
 /* A Shorter Connection Intervals (RCV) link uses the 1.25 ms interval grid with
  * standard 150 us tIFS even for intervals below BT_HCI_LE_INTERVAL_MIN (7.5 ms),
  * so the interval-unit / tIFS branches below must NOT treat it as a proprietary
@@ -1784,6 +1785,18 @@ void ull_conn_done(struct node_rx_event_done *done)
 		    !conn->lll.role) {
 			slot_us += EVENT_OVERHEAD_START_US + EVENT_OVERHEAD_END_US;
 		}
+
+#if defined(CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS)
+		/* A reduced-CE link (sub-1.25 ms ECV, or an FSU-shortened tIFS)
+		 * reserves only the processing overhead, relying on is_abort_cb to
+		 * keep anchor-point sync on overlap. A DLE / PHY / FSU update must not
+		 * inflate that back to a full airtime slot; mirror the reduced
+		 * reservation the conn-param path applies (ull_conn_update_parameters).
+		 */
+		if (lll->reduced_ce) {
+			slot_us = EVENT_OVERHEAD_START_US;
+		}
+#endif /* CONFIG_BT_CTLR_SHORTER_CONNECTION_INTERVALS */
 
 		ticks_slot = HAL_TICKER_US_TO_TICKS_CEIL(slot_us);
 		if (ticks_slot > conn->ull.ticks_slot) {

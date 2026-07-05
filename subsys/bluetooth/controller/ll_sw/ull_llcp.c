@@ -1254,6 +1254,18 @@ uint8_t ull_cp_frame_space_update(struct ll_conn *conn, uint16_t fs_min, uint16_
 		return BT_HCI_ERR_UNSUPP_REMOTE_FEATURE;
 	}
 
+	/* Clamp the offered range to this controller's hardware floor BEFORE it
+	 * goes on air. The responder picks any value in [FS_Min, FS_Max] and both
+	 * sides apply it, so offering a minimum below what our radio sustains
+	 * would let a conformant lower-floor peer pick a frame space we cannot
+	 * run, leaving the two sides with asymmetric inter-frame timing. If the
+	 * whole requested range is below the floor there is nothing to negotiate.
+	 */
+	if (fs_max < CONFIG_BT_CTLR_FSU_MIN_FRAME_SPACE_US) {
+		return BT_HCI_ERR_UNSUPP_FEATURE_PARAM_VAL;
+	}
+	fs_min = MAX(fs_min, CONFIG_BT_CTLR_FSU_MIN_FRAME_SPACE_US);
+
 	ctx = llcp_create_local_procedure(PROC_FRAME_SPACE_UPDATE);
 	if (!ctx) {
 		return BT_HCI_ERR_CMD_DISALLOWED;

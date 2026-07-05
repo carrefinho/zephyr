@@ -13,13 +13,13 @@
  * LL_FRAME_SPACE_RSP (accept, carrying the selected frame space) or
  * LL_REJECT_EXT_IND. There is no instant.
  *
- * NOTE: This implements the control plane (negotiation, PDUs, HCI command +
- * Complete event). The actual radio inter-frame-space retiming and the
- * Section 5.1.30.1 transitional receive-window widening are wired separately
- * (see TODO(fsu-radio) in frame_space_apply); until then the negotiated frame
- * space is reported to the Host but does not yet change radio timing -- so the
- * link is unaffected. This mirrors the control-plane-first approach the
- * Connection Subrating port takes (TODO(subrate-sched)).
+ * On a successful negotiation frame_space_apply() writes the agreed inter-frame
+ * space to the connection's tIFS trio (the LLL ISR re-reads it every connection
+ * event) and requests a scheduler slot-reservation recompute, so the shorter
+ * event air time takes effect on the next connection event. The Section 5.1.30.1
+ * transitional receive-window widening (needed for on-air correctness of the
+ * mid-connection swap on real hardware) is a separate hardening step and is not
+ * yet implemented here.
  */
 
 #include <zephyr/kernel.h>
@@ -165,21 +165,53 @@ static bool frame_space_negotiate(struct ll_conn *conn, struct proc_ctx *ctx)
 	return true;
 }
 
-/* Apply the negotiated frame space.
+/* Apply the negotiated frame space to the radio timing and scheduler slot.
  *
- * TODO(fsu-radio): the radio-integration step writes
- *   conn->lll.tifs_tx_us = tifs_rx_us = tifs_hcto_us = frame_space;
- *   conn->lll.evt_len_upd = 1U;   (re-size ull.ticks_slot via the DLE path)
- * and adds the Section 5.1.30.1 transitional receive-window widening so the
- * mid-connection IFS change does not drop a packet during the swap. Until then
- * this is control-plane-only: the negotiated value is reported to the Host
- * (Complete event) but the radio timing and slot reservation are unchanged, so
- * the link is unaffected (mirrors the Connection Subrating TODO(subrate-sched)).
+ * The fork keeps a single symmetric tIFS trio (not per-(type, PHY)), so the one
+ * negotiated frame space is written to tifs_tx_us / tifs_rx_us / tifs_hcto_us.
+ * The LLL ISR re-reads these every connection event (lll_conn.c/lll_central.c/
+ * lll_peripheral.c), so the write takes effect on the next event with no
+ * radio-HAL change. Setting evt_len_upd then drives the ull_conn_done slot
+ * recompute (mirrors ull_dle_update_eff / ull_llcp_phy.c) to shrink
+ * ull.ticks_slot to match the shorter event.
+ *
+ * The Section 5.1.30.1 transitional receive-window widening (holding the RX
+ * window at max(old, new) for the swap event so a boundary packet at the old
+ * IFS is not missed on real hardware) is a separate hardening step, not yet
+ * implemented.
  */
 static void frame_space_apply(struct ll_conn *conn, struct proc_ctx *ctx)
 {
-	ARG_UNUSED(conn);
-	ARG_UNUSED(ctx);
+	struct lll_conn *lll = &conn->lll;
+	uint16_t frame_space = ctx->data.frame_space.frame_space;
+
+	/* Defensive floor clamp. For a conformant peer this never fires: the REQ's
+	 * FS_Min is clamped to CONFIG_BT_CTLR_FSU_MIN_FRAME_SPACE_US when the local
+	 * procedure is created (ull_cp_frame_space_update), and the responder
+	 * clamps its own pick in frame_space_negotiate(). It only defends against
+	 * a NON-conformant peer whose RSP falls outside the offered range: such a
+	 * value must not collapse the inter-frame space below what the radio
+	 * sustains. The resulting local-vs-peer timing asymmetry is unavoidable at
+	 * that point (there is no post-RSP reject); protecting local scheduling
+	 * integrity wins. Update ctx so the Complete event reports the value
+	 * actually in use locally.
+	 */
+	if (frame_space < CONFIG_BT_CTLR_FSU_MIN_FRAME_SPACE_US) {
+		frame_space = CONFIG_BT_CTLR_FSU_MIN_FRAME_SPACE_US;
+		ctx->data.frame_space.frame_space = frame_space;
+	}
+
+	/* Write the single symmetric inter-frame space to the whole tIFS trio. */
+	lll->tifs_tx_us = frame_space;
+	lll->tifs_rx_us = frame_space;
+	lll->tifs_hcto_us = frame_space;
+
+	/* Request the slot-reservation recompute in the next ull_conn_done pass.
+	 * Order matters: the recompute reads tifs_rx_us, so this must follow the
+	 * tIFS writes above. FSU depends on BT_CTLR_SLOT_RESERVATION_UPDATE, so the
+	 * evt_len_upd field and the recompute site are always present here.
+	 */
+	lll->evt_len_upd = 1U;
 }
 
 static void frame_space_ntf(struct ll_conn *conn, struct proc_ctx *ctx)
@@ -508,6 +540,15 @@ static void rp_fs_st_wait_tx_ack_frame_space_rsp(struct ll_conn *conn, struct pr
 {
 	switch (evt) {
 	case RP_FS_EVT_ACK:
+		/* Deliberate deviation from the Core 6.2 5.1.30 nominal timing (the
+		 * responder applies "before sending" the RSP): applying on the RSP
+		 * tx-ack is robust to a lost RSP (no asymmetric-IFS window while the
+		 * peer retransmits toward an already-switched responder) and matches
+		 * the fork's tx-ack-apply idiom. NOTE for the future 5.1.30.1
+		 * transitional RX-window widening: the widening must be keyed to the
+		 * ACTUAL apply points -- RSP rx on the initiator, RSP tx-ack here --
+		 * not to the spec's nominal "at the RSP" wording.
+		 */
 		frame_space_apply(conn, ctx);
 		ctx->data.frame_space.error = BT_HCI_ERR_SUCCESS;
 		if (llcp_ntf_alloc_is_available()) {

@@ -1210,6 +1210,7 @@ config BT_CTLR_FRAME_SPACE_UPDATE
 	bool "Frame Space Update"
 	depends on BT_CTLR_FRAME_SPACE_UPDATE_SUPPORT
 	depends on BT_CTLR_EXTENDED_FEAT_SET
+	depends on BT_CTLR_SLOT_RESERVATION_UPDATE
 	select BT_CTLR_EXT_REJ_IND
 	default y if BT_FRAME_SPACE_UPDATE
 	help
@@ -1223,6 +1224,15 @@ config BT_CTLR_FRAME_SPACE_UPDATE
 	  bit is on page 1) and Extended Reject Indication (rejections use
 	  LL_REJECT_EXT_IND). Advertised directly by the controller -- no host
 	  feature-support bit (unlike Shorter Connection Intervals).
+
+	  Depends on BT_CTLR_SLOT_RESERVATION_UPDATE so the slot-resize machinery
+	  the apply relies on is present: applying a negotiated frame space sets
+	  lll->evt_len_upd to re-derive ull.ticks_slot, and both that field and the
+	  ull_conn_done recompute exist only under SLOT_RESERVATION_UPDATE (itself
+	  gated on BT_CTLR_DATA_LENGTH || BT_CTLR_PHY). Without this dependency an
+	  FSU=y build with DATA_LENGTH=n and PHY=n would fail to compile (the field
+	  is absent). Enabled with DATA_LENGTH or PHY (the default), the dependency
+	  is satisfied automatically.
 
 config BT_CTLR_FSU_MIN_FRAME_SPACE_US
 	int "FSU minimum supported frame space (us)"
