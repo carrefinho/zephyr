@@ -2684,14 +2684,14 @@ static void ecv_load_run(uint16_t interval_125us, bool use_fsu, enum ecv_load_mo
 		 * the same interval in the RESULT lines).
 		 */
 		if (!survived) {
-			FAIL("Control %u us (150 us tIFS): link dropped %lld ms into "
-			     "the soak\n", interval_us, elapsed_ms);
+			FAIL("Control %u us (%u us tIFS): link dropped %lld ms into "
+			     "the soak\n", interval_us, applied_tifs_us, elapsed_ms);
 			return;
 		}
 		(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-		PASS("ECV load control survived at %u us / 150 us tIFS -- CONTROL "
+		PASS("ECV load control survived at %u us / %u us tIFS -- CONTROL "
 		     "DATA: %u%% of nominal, %u gaps (see RESULT line)\n",
-		     interval_us, pct, gaps);
+		     interval_us, applied_tifs_us, pct, gaps);
 		return;
 	case ECV_LOAD_PROBE:
 	default:
@@ -2720,6 +2720,18 @@ static void test_central_main_ecv_fsu_load_625(void)
 static void test_central_main_ecv_load_750_nofsu(void)
 {
 	ecv_load_run(ECV_LOAD_INTERVAL_750_125US, false, ECV_LOAD_CONTROL);
+}
+
+/* nRF54L variant of the 625 us + FSU cell: same load, CONTROL verdict (assert
+ * survival, record the rate). The 2026-07-05 run measured 89% delivered on the
+ * nRF54L single-timer target -- just under the 90% gate -- with full CE cadence
+ * and zero gaps, i.e. a genuine per-event drain deficit that FSU's shorter tIFS
+ * does not recover (the wall is scheduler/CPU, not airtime). 625 us stays a
+ * RECORDED cell on nRF54L pending the HW campaign; the gate there is 750 us.
+ */
+static void test_central_main_ecv_fsu_load_625_rec(void)
+{
+	ecv_load_run(ECV_LOAD_INTERVAL_625_125US, true, ECV_LOAD_CONTROL);
 }
 
 static void test_central_main_ecv_load_625_nofsu(void)
@@ -2955,6 +2967,16 @@ static const struct bst_test_instance test_central[] = {
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_ecv_load_750_nofsu,
+	},
+	{
+		.test_id = "central_ecv_fsu_load_625_rec",
+		.test_descr = "Central: RECORDED -- 625 us ECV + FSU (80 us tIFS) under "
+			      "the ZMK-split pointing load; asserts link survival only. "
+			      "nRF54L cell: measured 89% on 2026-07-05 (single-timer "
+			      "drain deficit), kept recorded pending HW validation.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_ecv_fsu_load_625_rec,
 	},
 	{
 		.test_id = "central_ecv_load_625_nofsu",
