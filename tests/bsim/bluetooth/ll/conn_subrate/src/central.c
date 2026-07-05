@@ -2291,6 +2291,453 @@ static void test_central_main_sci_latency(void)
 }
 #endif /* CONFIG_BT_SHORTER_CONNECTION_INTERVALS */
 
+#if defined(CONFIG_BT_SHORTER_CONNECTION_INTERVALS) && defined(CONFIG_BT_FRAME_SPACE_UPDATE)
+/* ECV floor under a realistic ZMK-split pointing load, with and without FSU --
+ * the load-bearing re-test of the empty-PDU floor sweep. The peripheral
+ * (peripheral_zmk_load) streams one 8-byte input-event notification per
+ * connection interval (LL PDU 17 B unencrypted; +4 B MIC on a real paired
+ * link); the central drives the link to the target ECV interval via the
+ * Connection Rate procedure, optionally negotiates FSU down to the responder's
+ * 80 us floor, subscribes, and measures the delivered notification rate and
+ * sequence continuity over a multi-second soak.
+ *
+ * The link is first updated to 2M PHY: that is what a real ZMK split link
+ * negotiates and what Nordic's SDC documents its 750 us floor against (2M +
+ * 27-byte DLE). It also keeps every cell airtime-feasible (17 B data + empty
+ * PDU + tIFS = ~306 us at 150 us tIFS, ~236 us at 80 us -- both under the
+ * smallest 375 us interval), so any observed wall is the SCHEDULER, not raw
+ * airtime. On 1M PHY the 375 us probe would be airtime-infeasible regardless
+ * (~656 us at 150 us tIFS).
+ *
+ * Matrix (see the tests_scripts): {750, 625} us WITH FSU are the asserting
+ * gate; {750, 625} us WITHOUT FSU are the airtime-vs-scheduler CONTROL (they
+ * assert only link survival -- the delivered rate is the DATA and is logged
+ * either way); {500, 375} us WITH FSU are informational probes that record
+ * where degradation/failure happens without failing.
+ */
+enum ecv_load_mode {
+	ECV_LOAD_GATE,    /* assert survival + rate >= floor + zero seq gaps */
+	ECV_LOAD_CONTROL, /* assert survival; rate/gaps logged as DATA */
+	ECV_LOAD_PROBE,   /* informational: outcome logged, never fails past setup */
+};
+
+static struct bt_uuid_128 load_disc_uuid;
+static struct bt_gatt_discover_params load_disc;
+static struct bt_gatt_subscribe_params load_sub;
+static volatile uint32_t load_count;
+static volatile uint32_t load_gaps;
+static volatile bool load_seq_seen;
+static uint32_t load_prev_seq;
+static volatile bool load_subscribed;
+
+static uint8_t load_notify_cb(struct bt_conn *conn, struct bt_gatt_subscribe_params *params,
+			      const void *data, uint16_t length)
+{
+	ARG_UNUSED(conn);
+	ARG_UNUSED(params);
+
+	if (!data) {
+		return BT_GATT_ITER_STOP;
+	}
+	/* zmk_split_input_event_payload: u8 type, u16 code, u32 value, u8 sync;
+	 * the sequence number rides in `value` (offset 3, LE). Baseline from the
+	 * first notification seen: anything the peripheral streamed before the
+	 * subscribe simply never arrives and is not a gap.
+	 */
+	if (length == 8U) {
+		uint32_t seq = sys_get_le32((const uint8_t *)data + 3);
+
+		if (load_seq_seen && (seq != (load_prev_seq + 1U))) {
+			load_gaps++;
+		}
+		load_prev_seq = seq;
+		load_seq_seen = true;
+		load_count++;
+	}
+	return BT_GATT_ITER_CONTINUE;
+}
+
+static uint8_t load_disc_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+			    struct bt_gatt_discover_params *params)
+{
+	int err;
+
+	if (!attr) {
+		return BT_GATT_ITER_STOP;
+	}
+
+	if (load_disc.type == BT_GATT_DISCOVER_PRIMARY) {
+		memcpy(&load_disc_uuid, BT_UUID_DECLARE_128(ECV_LOAD_CHR_UUID),
+		       sizeof(load_disc_uuid));
+		load_disc.uuid = &load_disc_uuid.uuid;
+		load_disc.start_handle = attr->handle + 1;
+		load_disc.type = BT_GATT_DISCOVER_CHARACTERISTIC;
+		(void)bt_gatt_discover(conn, &load_disc);
+	} else if (load_disc.type == BT_GATT_DISCOVER_CHARACTERISTIC) {
+		memcpy(&load_disc_uuid, BT_UUID_GATT_CCC, sizeof(struct bt_uuid_16));
+		load_disc.uuid = &load_disc_uuid.uuid;
+		load_disc.start_handle = attr->handle + 2;
+		load_disc.type = BT_GATT_DISCOVER_DESCRIPTOR;
+		load_sub.value_handle = attr->handle + 1;
+		(void)bt_gatt_discover(conn, &load_disc);
+	} else {
+		load_sub.notify = load_notify_cb;
+		load_sub.value = BT_GATT_CCC_NOTIFY;
+		load_sub.ccc_handle = attr->handle;
+		err = bt_gatt_subscribe(conn, &load_sub);
+		if (err && err != -EALREADY) {
+			FAIL("Central load subscribe failed (err %d)\n", err);
+		} else {
+			load_subscribed = true;
+		}
+	}
+
+	return BT_GATT_ITER_STOP;
+}
+
+/* All the procedure completions the load flow needs: page-1 features (gate for
+ * both SCI and knowing the peer's FSU bit), the conn-rate 0x37, the FSU 0x35,
+ * and the PHY update. Reuses the handlers defined above.
+ */
+static struct bt_conn_cb load_conn_callbacks = {
+	.connected = connected,
+	.disconnected = disconnected,
+	.le_phy_updated = le_phy_updated,
+	.read_all_remote_feat_complete = efs_read_all_remote_feat_complete,
+	.conn_rate_changed = sci_conn_rate_changed,
+	.frame_space_updated = fsu_updated,
+};
+
+/* Bounded wait for the probe cells, which may lose the link at any step. */
+static bool ecv_load_wait(volatile bool *flag, int32_t timeout_ms)
+{
+	int64_t end = k_uptime_get() + timeout_ms;
+
+	while (!*flag && (k_uptime_get() < end) && (bst_result != Failed)) {
+		k_sleep(K_MSEC(20));
+	}
+	return *flag;
+}
+
+static void ecv_load_run(uint16_t interval_125us, bool use_fsu, enum ecv_load_mode mode)
+{
+	struct bt_conn_le_conn_rate_param rate = {
+		.interval_min_125us = interval_125us,
+		.interval_max_125us = interval_125us,
+		.subrate_min = 1U,
+		.subrate_max = 1U,
+		.max_latency = 0U,
+		.continuation_number = 0U,
+		.supervision_timeout_10ms = CONN_TIMEOUT_UNITS,
+		.min_ce_len_125us = 1U,
+		.max_ce_len_125us = 1U,
+	};
+	const uint32_t interval_us = (uint32_t)interval_125us * 125U;
+	const char *mode_str = (mode == ECV_LOAD_GATE) ? "GATE"
+			     : (mode == ECV_LOAD_CONTROL) ? "CONTROL" : "PROBE";
+	uint32_t delivered, gaps, expected, pct, before, gaps_before;
+	uint32_t ce_before = 0U, ce_events = 0U;
+	uint16_t applied_tifs_us = 150U;
+	uint16_t load_handle = 0xFFFFU;
+	struct bt_conn_info info;
+	int64_t t0, elapsed_ms;
+	bool survived;
+	int err;
+
+	bt_conn_cb_register(&load_conn_callbacks);
+
+	err = bt_enable(NULL);
+	if (err) {
+		FAIL("Bluetooth init failed (err %d)\n", err);
+		return;
+	}
+	printk("Central Bluetooth initialized (ECV load, %u us, FSU %s, %s)\n",
+	       interval_us, use_fsu ? "on" : "off", mode_str);
+
+	err = bt_le_scan_start(BT_LE_SCAN_ACTIVE, device_found);
+	if (err) {
+		FAIL("Scanning failed to start (err %d)\n", err);
+		return;
+	}
+
+	/* Setup at the default 30 ms interval is floor-independent: any failure
+	 * up to (and including) the rate-change request is suite/config breakage
+	 * and FAILs in every mode, probes included.
+	 */
+	SUBRATE_WAIT(central_connected && default_conn);
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	efs_complete = false;
+	err = bt_conn_le_read_all_remote_features(default_conn, 1U);
+	if (err) {
+		FAIL("Central read-all-remote-features request failed (err %d)\n", err);
+		return;
+	}
+	SUBRATE_WAIT(efs_complete);
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	/* 2M PHY first, while still at 30 ms (an instant procedure is safest on
+	 * the slow link; the conn-rate apply does not touch the PHY).
+	 */
+	phy_updated = false;
+	err = bt_conn_le_phy_update(default_conn, BT_CONN_LE_PHY_PARAM_2M);
+	if (err) {
+		FAIL("Central PHY update request failed (err %d)\n", err);
+		return;
+	}
+	SUBRATE_WAIT(phy_updated);
+
+	sci_changed = false;
+	err = bt_conn_le_conn_rate_request(default_conn, &rate);
+	if (err) {
+		FAIL("Central conn rate request for %u us rejected (err %d) -- the "
+		     "overlay ECV floor should accept it\n", interval_us, err);
+		return;
+	}
+	SUBRATE_WAIT(sci_changed);
+	if (sci_status != BT_HCI_ERR_SUCCESS) {
+		FAIL("Conn rate change to %u us failed (status 0x%02x)\n",
+		     interval_us, sci_status);
+		return;
+	}
+	err = bt_conn_get_info(default_conn, &info);
+	if (err || info.le.interval_us != interval_us) {
+		FAIL("Interval after rate change = %u us, expected %u\n",
+		     err ? 0U : info.le.interval_us, interval_us);
+		return;
+	}
+	printk("Central ECV load: %u us interval applied\n", interval_us);
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+
+	/* From here on the short interval is live: in PROBE mode outcomes are
+	 * data, not failures.
+	 */
+	if (use_fsu) {
+		/* FSU must run AFTER the rate change: the conn-rate apply resets
+		 * the tIFS trio to the standard 150 us (ull_conn.c, the tIFS leg of
+		 * the decoupled apply), so an earlier negotiation would be undone.
+		 */
+		struct bt_conn_le_frame_space_param fsp = {
+			.frame_space_min = ECV_LOAD_FSU_REQ_MIN_US,
+			.frame_space_max = ECV_LOAD_FSU_REQ_MAX_US,
+			.phys = BT_HCI_LE_FRAME_SPACE_UPDATE_PHY_1M_MASK |
+				BT_HCI_LE_FRAME_SPACE_UPDATE_PHY_2M_MASK,
+			.spacing_types =
+				BT_HCI_LE_FRAME_SPACE_UPDATE_SPACING_TYPE_IFS_ACL_CP_MASK |
+				BT_HCI_LE_FRAME_SPACE_UPDATE_SPACING_TYPE_IFS_ACL_PC_MASK,
+		};
+		bool fsu_ok = false;
+
+		fsu_done = false;
+		err = bt_conn_le_frame_space_update(default_conn, &fsp);
+		if (!err && ecv_load_wait(&fsu_done, ECV_LOAD_STEP_TIMEOUT_MS) &&
+		    fsu_status == BT_HCI_ERR_SUCCESS &&
+		    fsu_frame_space == ECV_LOAD_FSU_FLOOR_US) {
+			fsu_ok = true;
+			applied_tifs_us = ECV_LOAD_FSU_FLOOR_US;
+		}
+		if (!fsu_ok) {
+			if (mode != ECV_LOAD_PROBE) {
+				FAIL("FSU negotiation failed at %u us (err %d, status "
+				     "0x%02x, fs %u us)\n", interval_us, err, fsu_status,
+				     fsu_frame_space);
+				return;
+			}
+			printk("ECV-LOAD PROBE %u us: FSU negotiation FAILED (err %d, "
+			       "status 0x%02x) -- soaking at 150 us tIFS\n",
+			       interval_us, err, fsu_status);
+		} else {
+			printk("Central ECV load: FSU negotiated %u us tIFS\n",
+			       applied_tifs_us);
+		}
+		k_sleep(K_MSEC(500));
+	}
+
+	if (!central_connected || !default_conn) {
+		if (mode == ECV_LOAD_PROBE) {
+			PASS("ECV-LOAD PROBE %u us: link DROPPED before the soak "
+			     "(post-rate-change) -- floor is above this interval\n",
+			     interval_us);
+			return;
+		}
+		FAIL("Link dropped before the soak at %u us\n", interval_us);
+		return;
+	}
+
+	/* Discover + subscribe to the load characteristic. */
+	memcpy(&load_disc_uuid, BT_UUID_DECLARE_128(ECV_LOAD_SVC_UUID),
+	       sizeof(load_disc_uuid));
+	load_disc.uuid = &load_disc_uuid.uuid;
+	load_disc.func = load_disc_cb;
+	load_disc.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
+	load_disc.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
+	load_disc.type = BT_GATT_DISCOVER_PRIMARY;
+	err = bt_gatt_discover(default_conn, &load_disc);
+	if (err) {
+		FAIL("Central load discover failed (err %d)\n", err);
+		return;
+	}
+	if (!ecv_load_wait(&load_subscribed, ECV_LOAD_STEP_TIMEOUT_MS)) {
+		if (mode == ECV_LOAD_PROBE) {
+			PASS("ECV-LOAD PROBE %u us: subscribe never completed (link "
+			     "%s) -- link cannot carry GATT setup at this interval\n",
+			     interval_us, central_connected ? "up" : "DROPPED");
+			return;
+		}
+		FAIL("Central load subscribe timed out at %u us\n", interval_us);
+		return;
+	}
+
+	/* Wait for the stream to start, then let the cadence settle. */
+	{
+		int64_t end = k_uptime_get() + ECV_LOAD_STEP_TIMEOUT_MS;
+
+		while (load_count == 0U && k_uptime_get() < end &&
+		       (bst_result != Failed)) {
+			k_sleep(K_MSEC(20));
+		}
+	}
+	if (load_count == 0U) {
+		if (mode == ECV_LOAD_PROBE) {
+			PASS("ECV-LOAD PROBE %u us: no notifications arrived (link "
+			     "%s) -- no data flows at this interval\n", interval_us,
+			     central_connected ? "up" : "DROPPED");
+			return;
+		}
+		FAIL("No load notifications arrived at %u us\n", interval_us);
+		return;
+	}
+	k_sleep(K_MSEC(500));
+
+#if defined(CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT)
+	if (default_conn && !bt_hci_get_conn_handle(default_conn, &load_handle) &&
+	    load_handle < CONFIG_BT_MAX_CONN) {
+		ce_before = ll_test_conn_event_count[load_handle];
+	} else {
+		load_handle = 0xFFFFU;
+	}
+#else
+	ARG_UNUSED(ce_before);
+	ARG_UNUSED(load_handle);
+#endif
+
+	/* Soak. Sliced so a dropped link ends the window early with its data. */
+	before = load_count;
+	gaps_before = load_gaps;
+	t0 = k_uptime_get();
+	while ((k_uptime_get() - t0) < ECV_LOAD_SOAK_MS && central_connected) {
+		k_sleep(K_MSEC(100));
+	}
+	elapsed_ms = k_uptime_get() - t0;
+	survived = central_connected;
+	delivered = load_count - before;
+	gaps = load_gaps - gaps_before;
+#if defined(CONFIG_BT_CTLR_TEST_CONN_EVENT_COUNT)
+	if (load_handle != 0xFFFFU) {
+		ce_events = ll_test_conn_event_count[load_handle] - ce_before;
+	}
+#endif
+
+	/* Nominal: one notification per connection interval over the window. */
+	expected = (uint32_t)((elapsed_ms * 1000) / interval_us);
+	pct = expected ? ((delivered * 100U) / expected) : 0U;
+
+	/* The RESULT line is the scenario's data product -- one per cell, same
+	 * shape for gate/control/probe, so the matrix can be read straight out
+	 * of the CI logs. CEs is the on-air connection-event count over the same
+	 * window (0 if the counter hook is off): it separates "CEs run but carry
+	 * no data" from "CEs themselves are being skipped".
+	 */
+	printk("ECV-LOAD RESULT [%s]: interval %u us, tIFS %u us (FSU %s), PHY 2M, "
+	       "load 1x17B-LL-PDU/CE: delivered %u of nominal %u (%u%%), seq gaps %u, "
+	       "CEs %u, link %s after %lld ms\n",
+	       mode_str, interval_us, applied_tifs_us, use_fsu ? "on" : "off",
+	       delivered, expected, pct, gaps, ce_events,
+	       survived ? "up" : "DROPPED", elapsed_ms);
+
+	switch (mode) {
+	case ECV_LOAD_GATE:
+		if (!survived) {
+			FAIL("Gate %u us + FSU: link dropped %lld ms into the soak\n",
+			     interval_us, elapsed_ms);
+			return;
+		}
+		if (gaps != 0U) {
+			FAIL("Gate %u us + FSU: %u sequence gaps (LL ACL is reliable "
+			     "and ordered; the peripheral only advances the sequence "
+			     "on a successful queue, so any gap is a real loss)\n",
+			     interval_us, gaps);
+			return;
+		}
+		if (pct < ECV_LOAD_RATE_MIN_PCT) {
+			FAIL("Gate %u us + FSU: delivered only %u%% of nominal "
+			     "(floor %u%%)\n", interval_us, pct, ECV_LOAD_RATE_MIN_PCT);
+			return;
+		}
+		(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+		PASS("ECV load gate held: %u us + FSU carried the ZMK pointing load "
+		     "(%u%%, 0 gaps)\n", interval_us, pct);
+		return;
+	case ECV_LOAD_CONTROL:
+		/* The control asserts only survival; its delivered rate is the
+		 * airtime-vs-scheduler DATA (compare against the FSU gate cell at
+		 * the same interval in the RESULT lines).
+		 */
+		if (!survived) {
+			FAIL("Control %u us (150 us tIFS): link dropped %lld ms into "
+			     "the soak\n", interval_us, elapsed_ms);
+			return;
+		}
+		(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+		PASS("ECV load control survived at %u us / 150 us tIFS -- CONTROL "
+		     "DATA: %u%% of nominal, %u gaps (see RESULT line)\n",
+		     interval_us, pct, gaps);
+		return;
+	case ECV_LOAD_PROBE:
+	default:
+		/* Informational: the RESULT line is the product; record and pass. */
+		if (survived && default_conn) {
+			(void)bt_conn_disconnect(default_conn,
+						 BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+		}
+		PASS("ECV-LOAD PROBE %u us recorded: %u%% of nominal, %u gaps, "
+		     "link %s\n", interval_us, pct, gaps,
+		     survived ? "held" : "DROPPED");
+		return;
+	}
+}
+
+static void test_central_main_ecv_fsu_load_750(void)
+{
+	ecv_load_run(ECV_LOAD_INTERVAL_750_125US, true, ECV_LOAD_GATE);
+}
+
+static void test_central_main_ecv_fsu_load_625(void)
+{
+	ecv_load_run(ECV_LOAD_INTERVAL_625_125US, true, ECV_LOAD_GATE);
+}
+
+static void test_central_main_ecv_load_750_nofsu(void)
+{
+	ecv_load_run(ECV_LOAD_INTERVAL_750_125US, false, ECV_LOAD_CONTROL);
+}
+
+static void test_central_main_ecv_load_625_nofsu(void)
+{
+	ecv_load_run(ECV_LOAD_INTERVAL_625_125US, false, ECV_LOAD_CONTROL);
+}
+
+static void test_central_main_ecv_fsu_probe_500(void)
+{
+	ecv_load_run(ECV_LOAD_INTERVAL_500_125US, true, ECV_LOAD_PROBE);
+}
+
+static void test_central_main_ecv_fsu_probe_375(void)
+{
+	ecv_load_run(ECV_LOAD_INTERVAL_375_125US, true, ECV_LOAD_PROBE);
+}
+#endif /* CONFIG_BT_SHORTER_CONNECTION_INTERVALS && CONFIG_BT_FRAME_SPACE_UPDATE */
+
 static const struct bst_test_instance test_central[] = {
 	{
 		.test_id = "central",
@@ -2478,6 +2925,63 @@ static const struct bst_test_instance test_central[] = {
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_sci_latency,
+	},
+#endif
+#if defined(CONFIG_BT_SHORTER_CONNECTION_INTERVALS) && defined(CONFIG_BT_FRAME_SPACE_UPDATE)
+	{
+		.test_id = "central_ecv_fsu_load_750",
+		.test_descr = "Central: GATE -- 750 us ECV + FSU (80 us tIFS) under the "
+			      "ZMK-split pointing load (1x 8-byte notification per CE, "
+			      "2M PHY); asserts >= 90% delivered, zero seq gaps, link "
+			      "survives the soak.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_ecv_fsu_load_750,
+	},
+	{
+		.test_id = "central_ecv_fsu_load_625",
+		.test_descr = "Central: GATE -- 625 us ECV + FSU (80 us tIFS) under the "
+			      "ZMK-split pointing load; asserts >= 90% delivered, zero "
+			      "seq gaps, link survives the soak.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_ecv_fsu_load_625,
+	},
+	{
+		.test_id = "central_ecv_load_750_nofsu",
+		.test_descr = "Central: CONTROL -- 750 us ECV at the standard 150 us "
+			      "tIFS under the same load; asserts link survival only, "
+			      "the delivered rate is the airtime-vs-scheduler data.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_ecv_load_750_nofsu,
+	},
+	{
+		.test_id = "central_ecv_load_625_nofsu",
+		.test_descr = "Central: CONTROL -- 625 us ECV at the standard 150 us "
+			      "tIFS under the same load; asserts link survival only, "
+			      "the delivered rate is the airtime-vs-scheduler data.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_ecv_load_625_nofsu,
+	},
+	{
+		.test_id = "central_ecv_fsu_probe_500",
+		.test_descr = "Central: PROBE (informational) -- 500 us ECV + FSU under "
+			      "the load; records rate/gaps/survival, never fails past "
+			      "setup.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_ecv_fsu_probe_500,
+	},
+	{
+		.test_id = "central_ecv_fsu_probe_375",
+		.test_descr = "Central: PROBE (informational) -- 375 us ECV + FSU under "
+			      "the load; records rate/gaps/survival, never fails past "
+			      "setup.",
+		.test_pre_init_f = test_central_init,
+		.test_tick_f = test_central_tick,
+		.test_main_f = test_central_main_ecv_fsu_probe_375,
 	},
 #endif
 	BSTEST_END_MARKER,

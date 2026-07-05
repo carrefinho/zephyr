@@ -137,6 +137,37 @@ jobs:
           export EXECUTE_TIMEOUT=120
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_fsu.sh
 
+      # ECV floor under the realistic ZMK-split pointing load, SCI + FSU
+      # composed in one build (overlay-ecv-load.conf). The gate script asserts
+      # {750, 625} us with FSU and runs the no-FSU controls (the airtime-vs-
+      # scheduler discriminator); the probe script records {500, 375} us
+      # informationally and must never gate the branch (continue-on-error --
+      # sub-625 us may terminate in a controller assert, which is itself the
+      # recorded floor datum).
+      - name: Compile controller with SCI + FSU for the ECV load scenario (nRF52)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+          conf_overlay="${ZEPHYR_BASE}/tests/bsim/bluetooth/ll/conn_subrate/overlay-ecv-load.conf" \
+            app=tests/bsim/bluetooth/ll/conn_subrate compile
+          wait_for_background_jobs
+
+      - name: Run the ECV split-load floor scenario (gate + control, nRF52 bsim)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=240
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_fsu_load.sh
+
+      - name: Probe the ECV load floor below the gate (informational, nRF52 bsim)
+        shell: bash
+        continue-on-error: true
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=240
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_fsu_load_probe.sh
+
   # Same SCI scenarios on the nRF54L15 bsim target -- the primary ZMK SoC. nRF54L
   # uses a single radio timer; the sub-7.5 ms RCV interval stresses the event
   # overhead check that the in-tree single-timer fixes (6e8f081385e/e94d9c78117,
@@ -208,6 +239,15 @@ jobs:
             app=tests/bsim/bluetooth/ll/conn_subrate compile
           wait_for_background_jobs
 
+      - name: Compile controller with SCI + FSU for the ECV load scenario (nRF54L)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+          conf_overlay="${ZEPHYR_BASE}/tests/bsim/bluetooth/ll/conn_subrate/overlay-ecv-load.conf" \
+            app=tests/bsim/bluetooth/ll/conn_subrate compile
+          wait_for_background_jobs
+
       - name: Run the SCI scenarios (nRF54L bsim)
         shell: bash
         run: |
@@ -226,6 +266,27 @@ jobs:
           export ZEPHYR_BASE="${PWD}"
           export EXECUTE_TIMEOUT=120
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_fsu.sh
+
+      # The load-bearing floor question this whole job exists for: does the
+      # nRF54L ~625 us single-timer wall hold under the realistic ZMK pointing
+      # load, and does FSU (80 us tIFS) move it? Gate asserts {750, 625} us
+      # with FSU + runs the 150 us tIFS controls; the sub-gate probes are
+      # informational (continue-on-error -- an assert below 625 us is the
+      # expected prepare-pipeline floor datum, lll.c:892).
+      - name: Run the ECV split-load floor scenario (gate + control, nRF54L bsim)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=240
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_fsu_load.sh
+
+      - name: Probe the ECV load floor below the gate (informational, nRF54L bsim)
+        shell: bash
+        continue-on-error: true
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=240
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_fsu_load_probe.sh
 
   # Build-only check of the hardware-in-the-loop sci_latency sample for the
   # physical nRF54L15 DK (both roles), so it does not bit-rot against controller
