@@ -114,6 +114,54 @@
  */
 #define SUBRATE_NOTIFY_PERIOD_MS 400
 
+/* ZMK-split pointing load under ECV (the load-bearing floor re-test): a notify
+ * characteristic the peripheral streams one 8-byte input-event payload per
+ * connection interval to, modelling a streaming trackpad on the ZMK split link
+ * (struct zmk_split_input_event_payload: u8 type, u16 code, u32 value, u8 sync
+ * -- app/include/zmk/split/bluetooth/service.h in ZMK, sent via bt_gatt_notify
+ * per input event). On the wire: ATT notify 1 + 2 + 8 = 11 B -> L2CAP + 4 =
+ * 15 B -> LL Data PDU 17 B, unencrypted (this suite has no SMP; a real paired
+ * split link adds a 4-byte MIC -> 21 B). The sequence number rides in the
+ * payload's `value` field so the central can count delivery gaps.
+ */
+#define ECV_LOAD_SVC_UUID \
+	BT_UUID_128_ENCODE(0x5ab12705, 0x1234, 0x4c0d, 0x9e1a, 0xc0ffee000005)
+#define ECV_LOAD_CHR_UUID \
+	BT_UUID_128_ENCODE(0x5ab12706, 0x1234, 0x4c0d, 0x9e1a, 0xc0ffee000006)
+
+/* Interval matrix (125 us units): gate cells {750, 625} us assert; probe cells
+ * {500, 375} us record where degradation happens without failing (they sit
+ * below the prior empty-PDU floors: nRF54L ~625 us pipeline-bound, nRF52
+ * 375 us only with an enlarged done pool -- a tunable this branch does not
+ * carry, so sub-625 probes may terminate in a controller assert; their CI step
+ * is continue-on-error).
+ */
+#define ECV_LOAD_INTERVAL_750_125US 6U
+#define ECV_LOAD_INTERVAL_625_125US 5U
+#define ECV_LOAD_INTERVAL_500_125US 4U
+#define ECV_LOAD_INTERVAL_375_125US 3U
+
+/* Soak window and the delivered-rate gate. Nominal is one notification per
+ * connection interval. The peripheral's generator is a k_timer whose period is
+ * K_USEC(interval) ceil-rounded to 32768 Hz ticks, so it runs at worst ~5.5%
+ * slow (375 us -> 13 ticks = 396.7 us => 94.5% of nominal; 625 us -> 21 ticks
+ * = 640.9 us => 97.5%). A 90% one-sided floor therefore has >= 4.5 points of
+ * deterministic margin, while a cadence collapse (a skipped-CE floor breaks to
+ * <= 50%) falls far below -- non-flaky by construction.
+ */
+#define ECV_LOAD_SOAK_MS       6000
+#define ECV_LOAD_RATE_MIN_PCT  90U
+
+/* FSU negotiation for the load cells: request below the responder floor so the
+ * negotiated space is exactly the configured floor (80 us), same as central_fsu.
+ */
+#define ECV_LOAD_FSU_REQ_MIN_US 60U
+#define ECV_LOAD_FSU_REQ_MAX_US 150U
+#define ECV_LOAD_FSU_FLOOR_US   80U
+
+/* Bounded waits for the probe cells (which may lose the link at any step). */
+#define ECV_LOAD_STEP_TIMEOUT_MS 5000
+
 /* Time the peripheral waits after connecting before requesting subrating, to
  * let feature exchange and the central's discovery complete first.
  */

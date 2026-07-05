@@ -98,6 +98,30 @@ BT_GATT_SERVICE_DEFINE(lat_svc,
 			       BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_NONE, NULL, NULL, NULL),
 	BT_GATT_CCC(lat_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE));
 
+#if defined(CONFIG_BT_SHORTER_CONNECTION_INTERVALS)
+/* ZMK-split pointing-load characteristic: the peripheral streams one 8-byte
+ * input-event payload per connection interval on it, modelling a streaming
+ * trackpad on the ZMK split link (see ECV_LOAD_SVC_UUID in conn_subrate.h for
+ * the payload/wire-size accounting; a real paired link adds a 4-byte MIC).
+ * attrs[2] is the value attribute (cf. lat_svc). Streaming is gated on the
+ * central's CCC subscribe (like a real ZMK central) so bt_gatt_notify never
+ * runs against a disabled CCC and the failure counter stays meaningful.
+ */
+static volatile bool load_ccc_enabled;
+
+static void load_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
+{
+	ARG_UNUSED(attr);
+	load_ccc_enabled = (value == BT_GATT_CCC_NOTIFY);
+}
+
+BT_GATT_SERVICE_DEFINE(load_svc,
+	BT_GATT_PRIMARY_SERVICE(BT_UUID_DECLARE_128(ECV_LOAD_SVC_UUID)),
+	BT_GATT_CHARACTERISTIC(BT_UUID_DECLARE_128(ECV_LOAD_CHR_UUID),
+			       BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_NONE, NULL, NULL, NULL),
+	BT_GATT_CCC(load_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE));
+#endif /* CONFIG_BT_SHORTER_CONNECTION_INTERVALS */
+
 static void subrate_changed(struct bt_conn *conn,
 			    const struct bt_conn_le_subrate_changed *params)
 {
@@ -415,6 +439,151 @@ static void test_peripheral_main_sci_latency(void)
 	PASS("Peripheral streamed latency notifications\n");
 }
 
+#if defined(CONFIG_BT_SHORTER_CONNECTION_INTERVALS)
+/* Peer side of the central_ecv_* load cells: once the Central has driven the
+ * link to its target ECV interval (learned from the conn_rate_changed event's
+ * interval_us), stream exactly one 8-byte ZMK input-event notification per
+ * connection interval, paced by a k_timer at the interval period -- a
+ * streaming trackpad on the split link. The payload mirrors ZMK's
+ * zmk_split_input_event_payload {u8 type, u16 code, u32 value, u8 sync}
+ * (type = 2/EV_REL, code = 0/REL_X, sync = 1) with the sequence number in
+ * `value` so the Central can count delivery gaps. The sequence advances ONLY
+ * on a successful queue: a send failure (e.g. -ENOMEM under backpressure)
+ * shows up at the Central as a rate shortfall, not as a fake gap, so gaps mean
+ * genuine loss. The Central holds all the assertions; this side PASSes on the
+ * first successful send and keeps streaming (so one testid serves the gate,
+ * control, and probe cells alike -- on a probe the link may die under it,
+ * which is the Central's data, not this side's failure).
+ */
+static volatile uint32_t load_interval_us;
+
+static void load_conn_rate_changed(struct bt_conn *conn, uint8_t status,
+				   const struct bt_conn_le_conn_rate_changed *params)
+{
+	ARG_UNUSED(conn);
+
+	if (status == BT_HCI_ERR_SUCCESS && params != NULL) {
+		load_interval_us = params->interval_us;
+	}
+	printk("Peripheral conn rate changed: status 0x%02x interval %u us\n",
+	       status, params != NULL ? params->interval_us : 0U);
+}
+
+static struct bt_conn_cb load_rate_callbacks = {
+	.conn_rate_changed = load_conn_rate_changed,
+};
+
+/* Semaphore depth 8: a small backlog survives a busy host thread; beyond that
+ * ticks collapse and the Central sees the rate shortfall (the intended signal).
+ */
+static K_SEM_DEFINE(load_tick_sem, 0, 8);
+
+static void load_timer_fn(struct k_timer *timer)
+{
+	ARG_UNUSED(timer);
+	k_sem_give(&load_tick_sem);
+}
+
+static K_TIMER_DEFINE(load_timer, load_timer_fn, NULL);
+
+static void test_peripheral_main_zmk_load(void)
+{
+	uint32_t seq = 0U, sent = 0U, failed = 0U, us;
+	bool passed = false;
+
+	bt_conn_cb_register(&load_rate_callbacks);
+
+	if (peripheral_setup()) {
+		return;
+	}
+
+	while (!connected_flag) {
+		k_sleep(K_MSEC(50));
+		if (bst_result == Failed) {
+			return;
+		}
+	}
+
+	/* Wait for the Central to drive the link to its sub-7.5 ms target AND
+	 * enable notifications (either order): input only flows on a subscribed
+	 * characteristic, as on a real ZMK split link. A link lost while waiting
+	 * is recorded, not failed: the central owns every cell's verdict (on a
+	 * gate cell it FAILs the run; on a probe it is the recorded floor datum).
+	 */
+	while (load_interval_us == 0U || load_interval_us >= 7500U ||
+	       !load_ccc_enabled) {
+		k_sleep(K_MSEC(50));
+		if (bst_result == Failed) {
+			return;
+		}
+		if (!connected_flag) {
+			PASS("Peripheral ZMK-load: link lost before streaming began "
+			     "(central records the outcome)\n");
+			while (true) {
+				k_sleep(K_MSEC(SETTLE_DELAY_MS));
+			}
+		}
+	}
+	us = load_interval_us;
+	printk("Peripheral ZMK-load: streaming 1 x 8-byte input event per %u us CE\n",
+	       us);
+
+	/* K_USEC ceil-rounds to system ticks (30.5 us at 32768 Hz), so the
+	 * generator runs at most ~1 tick slow per period -- accounted for in the
+	 * Central's 90% rate floor (see conn_subrate.h).
+	 */
+	k_timer_start(&load_timer, K_USEC(us), K_USEC(us));
+
+	while (connected_flag && bst_result != Failed) {
+		uint8_t payload[8];
+		int err;
+
+		if (k_sem_take(&load_tick_sem, K_MSEC(1000)) != 0) {
+			continue; /* re-check connected_flag */
+		}
+
+		/* zmk_split_input_event_payload, built LE-explicit. */
+		payload[0] = 0x02U;              /* type: EV_REL */
+		sys_put_le16(0x0000U, &payload[1]); /* code: REL_X */
+		sys_put_le32(seq, &payload[3]);  /* value: sequence number */
+		payload[7] = 0x01U;              /* sync */
+
+		err = bt_gatt_notify(default_conn, &load_svc.attrs[2], payload,
+				     sizeof(payload));
+		if (err == 0) {
+			seq++;
+			sent++;
+			if (!passed) {
+				passed = true;
+				PASS("Peripheral ZMK-load streaming at %u us\n", us);
+			}
+		} else {
+			failed++;
+			if (failed <= 5U) {
+				printk("Peripheral ZMK-load notify failed (err %d, "
+				       "%u so far)\n", err, failed);
+			}
+		}
+	}
+
+	k_timer_stop(&load_timer);
+	printk("Peripheral ZMK-load final: sent %u, failed %u (interval %u us)\n",
+	       sent, failed, us);
+	if (!passed) {
+		/* Not one notification queued before the link went down: the
+		 * central records/asserts this per its cell mode.
+		 */
+		PASS("Peripheral ZMK-load: link died before any send succeeded "
+		     "(central records the outcome)\n");
+	}
+
+	/* Stay alive for the rest of the simulation (cf. peripheral_plain). */
+	while (true) {
+		k_sleep(K_MSEC(SETTLE_DELAY_MS));
+	}
+}
+#endif /* CONFIG_BT_SHORTER_CONNECTION_INTERVALS */
+
 static void test_peripheral_main_notify(void)
 {
 	uint16_t heartrate = 90U;
@@ -552,6 +721,18 @@ static const struct bst_test_instance test_peripheral[] = {
 		.test_tick_f = test_peripheral_tick,
 		.test_main_f = test_peripheral_main_plain,
 	},
+#if defined(CONFIG_BT_SHORTER_CONNECTION_INTERVALS)
+	{
+		.test_id = "peripheral_zmk_load",
+		.test_descr = "Peripheral: streams one 8-byte ZMK input-event "
+			      "notification per connection interval once the Central "
+			      "drives the link to its ECV target (the ZMK-split "
+			      "pointing load for the central_ecv_* load cells).",
+		.test_pre_init_f = test_peripheral_init,
+		.test_tick_f = test_peripheral_tick,
+		.test_main_f = test_peripheral_main_zmk_load,
+	},
+#endif
 	BSTEST_END_MARKER,
 };
 
