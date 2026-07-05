@@ -273,12 +273,12 @@ jobs:
       # with FSU + runs the 150 us tIFS controls; the sub-gate probes are
       # informational (continue-on-error -- an assert below 625 us is the
       # expected prepare-pipeline floor datum, lll.c:892).
-      - name: Run the ECV split-load floor scenario (gate + control, nRF54L bsim)
+      - name: Run the ECV split-load floor scenario (gate + recorded + control, nRF54L bsim)
         shell: bash
         run: |
           export ZEPHYR_BASE="${PWD}"
           export EXECUTE_TIMEOUT=240
-          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_fsu_load.sh
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_fsu_load_54l.sh
 
       - name: Probe the ECV load floor below the gate (informational, nRF54L bsim)
         shell: bash
