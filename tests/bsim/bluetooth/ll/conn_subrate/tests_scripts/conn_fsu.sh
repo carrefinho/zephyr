@@ -7,10 +7,10 @@
 # then runs the Frame Space Update procedure (HCI 0x209D -> LL_FRAME_SPACE_REQ /
 # LL_FRAME_SPACE_RSP). The central asserts the 0x35 Frame Space Update Complete
 # event fired with success, the negotiated frame space clamps up to the
-# responder's 80 us floor (BT_CTLR_FSU_MIN_FRAME_SPACE_US), a below-floor request
-# is rejected (0x11), and the link survives - the procedure is control-plane-only
-# on this fork (frame_space_apply is a stub, TODO(fsu-radio)), so a sound FSM must
-# not perturb the link. Exercises the full HCI -> procedure -> 0x35 event path on
+# responder's 80 us floor (BT_CTLR_FSU_MIN_FRAME_SPACE_US), the apply shrinks the
+# scheduler slot reservation (observed via ll_test_conn_ticks_slot[]), a
+# below-floor request is rejected (0x11), and the link survives the retiming.
+# Exercises the full HCI -> procedure -> 0x35 event -> radio/slot apply path on
 # the FSU overlay build (CONFIG_BT_FRAME_SPACE_UPDATE=y).
 #
 # The peer is peripheral_plain: the controller answers the LL_FRAME_SPACE_REQ as

@@ -402,6 +402,16 @@ void ull_periph_setup(struct node_rx_pdu *rx, struct node_rx_ftr *ftr,
 
 	conn->ull.ticks_slot = HAL_TICKER_US_TO_TICKS_CEIL(slot_us);
 
+#if defined(CONFIG_BT_CTLR_TEST_CONN_TICKS_SLOT)
+	/* Publish the initial slot reservation now the handle is assigned (above),
+	 * so a bsim test has a "before" baseline to compare against once a Frame
+	 * Space Update shrinks it. Not for production use.
+	 */
+	if (lll->handle < CONFIG_BT_MAX_CONN) {
+		ll_test_conn_ticks_slot[lll->handle] = conn->ull.ticks_slot;
+	}
+#endif /* CONFIG_BT_CTLR_TEST_CONN_TICKS_SLOT */
+
 	ticks_slot_offset = HAL_TICKER_US_TO_TICKS(EVENT_OVERHEAD_XTAL_US);
 	if (IS_ENABLED(CONFIG_BT_CTLR_LOW_LAT)) {
 		ticks_slot_overhead = ticks_slot_offset;
