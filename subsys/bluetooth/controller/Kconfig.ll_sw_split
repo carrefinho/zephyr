@@ -950,7 +950,6 @@ config BT_CTLR_NRF_GRTC_AUTOEN_DEFAULT
 config BT_CTLR_RADIO_ENABLE_FAST
 	bool "Use tTXEN/RXEN,FAST ramp-up"
 	depends on SOC_COMPATIBLE_NRF52X || SOC_COMPATIBLE_NRF53X || SOC_COMPATIBLE_NRF54LX
-	select BT_CTLR_SW_SWITCH_SINGLE_TIMER if SOC_COMPATIBLE_NRF54LX
 	default y
 	help
 	  Enable use of fast radio ramp-up mode.
@@ -973,6 +972,7 @@ config BT_CTLR_SW_SWITCH_SINGLE_TIMER
 	bool "Single TIMER tIFS Trx SW switching"
 	depends on (!BT_CTLR_TIFS_HW) && (SOC_COMPATIBLE_NRF52X || SOC_COMPATIBLE_NRF53X || \
 					  SOC_COMPATIBLE_NRF54LX)
+	default y if SOC_COMPATIBLE_NRF54LX
 	help
 	  Implement the tIFS Trx SW switch with the same TIMER
 	  instance, as the one used for Bluetooth event timing. Requires
