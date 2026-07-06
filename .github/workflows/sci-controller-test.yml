@@ -288,6 +288,38 @@ jobs:
           export EXECUTE_TIMEOUT=240
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_fsu_load_probe.sh
 
+      # DUAL-TIMER A/B (backport of upstream PR #109528): rebuild the same ECV
+      # load controller with CONFIG_BT_CTLR_SW_SWITCH_SINGLE_TIMER=n
+      # (EVENT_TIMER = NRF_TIMER00, HAL_RADIO_ISR_LATENCY_MAX_US = 0) and re-run
+      # the floor matrix + sub-gate probes. The delivered-rate lines are the
+      # experiment: does dual-timer move the single-timer ECV floor (93% @ 750,
+      # 89% @ 625)? Experimental backport -- both run steps are continue-on-error
+      # so this can never gate the branch.
+      - name: Compile controller with SCI + FSU dual-timer for the ECV load A/B (nRF54L)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+          conf_overlay="${ZEPHYR_BASE}/tests/bsim/bluetooth/ll/conn_subrate/overlay-ecv-load-dt.conf" \
+            app=tests/bsim/bluetooth/ll/conn_subrate compile
+          wait_for_background_jobs
+
+      - name: Run the ECV split-load floor scenario (DUAL-TIMER A/B, nRF54L bsim)
+        shell: bash
+        continue-on-error: true
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=240
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_fsu_load_54l_dt.sh
+
+      - name: Probe the ECV load floor below the gate (DUAL-TIMER, informational, nRF54L bsim)
+        shell: bash
+        continue-on-error: true
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=240
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_fsu_load_probe_dt.sh
+
   # Build-only check of the hardware-in-the-loop sci_latency sample for the
   # physical nRF54L15 DK (both roles), so it does not bit-rot against controller
   # API changes. The sample is driven on real DKs over VCOM UART; CI cannot run it.
