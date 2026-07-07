@@ -2436,6 +2436,8 @@ static void ecv_load_run(uint16_t interval_125us, bool use_fsu, enum ecv_load_mo
 	const char *mode_str = (mode == ECV_LOAD_GATE) ? "GATE"
 			     : (mode == ECV_LOAD_CONTROL) ? "CONTROL" : "PROBE";
 	uint32_t delivered, gaps, expected, pct, before, gaps_before;
+	uint32_t offered, pct_off;
+	uint64_t period_ticks;
 	uint32_t ce_before = 0U, ce_events = 0U;
 	uint16_t applied_tifs_us = 150U;
 	uint16_t load_handle = 0xFFFFU;
@@ -2642,6 +2644,22 @@ static void ecv_load_run(uint16_t interval_125us, bool use_fsu, enum ecv_load_mo
 	expected = (uint32_t)((elapsed_ms * 1000) / interval_us);
 	pct = expected ? ((delivered * 100U) / expected) : 0U;
 
+	/* Offered: what the generator could actually send. k_timer rounds the
+	 * period UP to the system tick, and the tick is coarse on the bsim boards
+	 * (100 us under GRTC on nRF54L, ~30.5 us under the 32 KHz RTC on nRF52),
+	 * so e.g. a 625 us load timer really fires every 700 us on nRF54L. Gating
+	 * delivery against the interval-nominal then fails on generator shortfall
+	 * the controller never saw (the 2026-07-05 "89% @ 625 us drain deficit"
+	 * was exactly this accounting artifact -- the controller had delivered
+	 * 100% of the offered load). Rate verdicts therefore use delivered vs
+	 * OFFERED; the interval-nominal stays in the RESULT line as context.
+	 */
+	period_ticks = ((uint64_t)interval_us * CONFIG_SYS_CLOCK_TICKS_PER_SEC +
+			(USEC_PER_SEC - 1)) / USEC_PER_SEC;
+	offered = (uint32_t)(((uint64_t)elapsed_ms * CONFIG_SYS_CLOCK_TICKS_PER_SEC) /
+			     (MSEC_PER_SEC * period_ticks));
+	pct_off = offered ? ((delivered * 100U) / offered) : 0U;
+
 	/* The RESULT line is the scenario's data product -- one per cell, same
 	 * shape for gate/control/probe, so the matrix can be read straight out
 	 * of the CI logs. CEs is the on-air connection-event count over the same
@@ -2649,10 +2667,10 @@ static void ecv_load_run(uint16_t interval_125us, bool use_fsu, enum ecv_load_mo
 	 * no data" from "CEs themselves are being skipped".
 	 */
 	printk("ECV-LOAD RESULT [%s]: interval %u us, tIFS %u us (FSU %s), PHY 2M, "
-	       "load 1x17B-LL-PDU/CE: delivered %u of nominal %u (%u%%), seq gaps %u, "
-	       "CEs %u, link %s after %lld ms\n",
+	       "load 1x17B-LL-PDU/CE: delivered %u of offered %u (%u%%; %u%% of "
+	       "interval-nominal %u), seq gaps %u, CEs %u, link %s after %lld ms\n",
 	       mode_str, interval_us, applied_tifs_us, use_fsu ? "on" : "off",
-	       delivered, expected, pct, gaps, ce_events,
+	       delivered, offered, pct_off, pct, expected, gaps, ce_events,
 	       survived ? "up" : "DROPPED", elapsed_ms);
 
 	switch (mode) {
@@ -2669,14 +2687,15 @@ static void ecv_load_run(uint16_t interval_125us, bool use_fsu, enum ecv_load_mo
 			     interval_us, gaps);
 			return;
 		}
-		if (pct < ECV_LOAD_RATE_MIN_PCT) {
-			FAIL("Gate %u us + FSU: delivered only %u%% of nominal "
-			     "(floor %u%%)\n", interval_us, pct, ECV_LOAD_RATE_MIN_PCT);
+		if (pct_off < ECV_LOAD_RATE_MIN_PCT) {
+			FAIL("Gate %u us + FSU: delivered only %u%% of the offered "
+			     "load (floor %u%%)\n", interval_us, pct_off,
+			     ECV_LOAD_RATE_MIN_PCT);
 			return;
 		}
 		(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
 		PASS("ECV load gate held: %u us + FSU carried the ZMK pointing load "
-		     "(%u%%, 0 gaps)\n", interval_us, pct);
+		     "(%u%% of offered, 0 gaps)\n", interval_us, pct_off);
 		return;
 	case ECV_LOAD_CONTROL:
 		/* The control asserts only survival; its delivered rate is the
@@ -2690,8 +2709,8 @@ static void ecv_load_run(uint16_t interval_125us, bool use_fsu, enum ecv_load_mo
 		}
 		(void)bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
 		PASS("ECV load control survived at %u us / %u us tIFS -- CONTROL "
-		     "DATA: %u%% of nominal, %u gaps (see RESULT line)\n",
-		     interval_us, applied_tifs_us, pct, gaps);
+		     "DATA: %u%% of offered, %u gaps (see RESULT line)\n",
+		     interval_us, applied_tifs_us, pct_off, gaps);
 		return;
 	case ECV_LOAD_PROBE:
 	default:
@@ -2700,8 +2719,8 @@ static void ecv_load_run(uint16_t interval_125us, bool use_fsu, enum ecv_load_mo
 			(void)bt_conn_disconnect(default_conn,
 						 BT_HCI_ERR_REMOTE_USER_TERM_CONN);
 		}
-		PASS("ECV-LOAD PROBE %u us recorded: %u%% of nominal, %u gaps, "
-		     "link %s\n", interval_us, pct, gaps,
+		PASS("ECV-LOAD PROBE %u us recorded: %u%% of offered, %u gaps, "
+		     "link %s\n", interval_us, pct_off, gaps,
 		     survived ? "held" : "DROPPED");
 		return;
 	}
@@ -2722,12 +2741,12 @@ static void test_central_main_ecv_load_750_nofsu(void)
 	ecv_load_run(ECV_LOAD_INTERVAL_750_125US, false, ECV_LOAD_CONTROL);
 }
 
-/* nRF54L variant of the 625 us + FSU cell: same load, CONTROL verdict (assert
- * survival, record the rate). The 2026-07-05 run measured 89% delivered on the
- * nRF54L single-timer target -- just under the 90% gate -- with full CE cadence
- * and zero gaps, i.e. a genuine per-event drain deficit that FSU's shorter tIFS
- * does not recover (the wall is scheduler/CPU, not airtime). 625 us stays a
- * RECORDED cell on nRF54L pending the HW campaign; the gate there is 750 us.
+/* 625 us + FSU with a CONTROL verdict (assert survival, record the rate).
+ * Historical: this existed because the 2026-07-05 interval-nominal accounting
+ * read 89% on nRF54L and demoted the cell -- later shown to be the k_timer
+ * tick-quantization artifact (the controller delivered 100% of the OFFERED
+ * load; see the offered-based accounting at the RESULT computation). The 54L
+ * script gates 625 us again; kept for ad-hoc runs that want a no-assert cell.
  */
 static void test_central_main_ecv_fsu_load_625_rec(void)
 {
@@ -2971,9 +2990,9 @@ static const struct bst_test_instance test_central[] = {
 	{
 		.test_id = "central_ecv_fsu_load_625_rec",
 		.test_descr = "Central: RECORDED -- 625 us ECV + FSU (80 us tIFS) under "
-			      "the ZMK-split pointing load; asserts link survival only. "
-			      "nRF54L cell: measured 89% on 2026-07-05 (single-timer "
-			      "drain deficit), kept recorded pending HW validation.",
+			      "the ZMK-split pointing load; asserts link survival only "
+			      "(no rate gate). Historical no-assert variant; the 54L "
+			      "script gates 625 us via central_ecv_fsu_load_625 again.",
 		.test_pre_init_f = test_central_init,
 		.test_tick_f = test_central_tick,
 		.test_main_f = test_central_main_ecv_fsu_load_625_rec,
