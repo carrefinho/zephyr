@@ -168,6 +168,14 @@ jobs:
           export EXECUTE_TIMEOUT=240
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_fsu_load_probe.sh
 
+      - name: Phase-sensitivity sweep of the ECV load cells (informational, nRF52 bsim)
+        shell: bash
+        continue-on-error: true
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=480
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_fsu_load_phase.sh
+
   # Same SCI scenarios on the nRF54L15 bsim target -- the primary ZMK SoC. nRF54L
   # uses a single radio timer; the sub-7.5 ms RCV interval stresses the event
   # overhead check that the in-tree single-timer fixes (6e8f081385e/e94d9c78117,
@@ -287,6 +295,14 @@ jobs:
           export ZEPHYR_BASE="${PWD}"
           export EXECUTE_TIMEOUT=240
           tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_fsu_load_probe.sh
+
+      - name: Phase-sensitivity sweep of the ECV load cells (informational, nRF54L bsim)
+        shell: bash
+        continue-on-error: true
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export EXECUTE_TIMEOUT=480
+          tests/bsim/bluetooth/ll/conn_subrate/tests_scripts/conn_ecv_fsu_load_phase.sh
 
       # DUAL-TIMER A/B (backport of upstream PR #109528): rebuild the same ECV
       # load controller with CONFIG_BT_CTLR_SW_SWITCH_SINGLE_TIMER=n
