@@ -32,3 +32,31 @@ tests:
       - nrf52_bsim
     integration_platforms:
       - nrf54l15dk/nrf54l15/cpuapp
+  sample.bluetooth.sci_latency.fsu_swap:
+    build_only: true
+    extra_args: EXTRA_CONF_FILE="central.conf;mode_fsu_swap.conf"
+    platform_allow:
+      - nrf54l15dk/nrf54l15/cpuapp
+    integration_platforms:
+      - nrf54l15dk/nrf54l15/cpuapp
+  sample.bluetooth.sci_latency.ecv_load:
+    build_only: true
+    extra_args: EXTRA_CONF_FILE="central.conf;mode_ecv_load.conf"
+    platform_allow:
+      - nrf54l15dk/nrf54l15/cpuapp
+    integration_platforms:
+      - nrf54l15dk/nrf54l15/cpuapp
+  sample.bluetooth.sci_latency.ecv_load_dualtimer:
+    build_only: true
+    extra_args: EXTRA_CONF_FILE="central.conf;mode_ecv_load.conf;overlay-dualtimer.conf"
+    platform_allow:
+      - nrf54l15dk/nrf54l15/cpuapp
+    integration_platforms:
+      - nrf54l15dk/nrf54l15/cpuapp
+  sample.bluetooth.sci_latency.peripheral_dualtimer:
+    build_only: true
+    extra_args: EXTRA_CONF_FILE="peripheral.conf;overlay-dualtimer.conf"
+    platform_allow:
+      - nrf54l15dk/nrf54l15/cpuapp
+    integration_platforms:
+      - nrf54l15dk/nrf54l15/cpuapp
