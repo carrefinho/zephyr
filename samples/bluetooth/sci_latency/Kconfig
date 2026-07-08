@@ -10,9 +10,25 @@ config SCI_LATENCY_CENTRAL
 	  sweeps the subrate factor and logs round-trip GATT latency over the VCOM
 	  UART. When unset, this build is the Peripheral that advertises and accepts.
 
+choice SCI_LATENCY_MODE
+	prompt "Central test mode"
+	depends on SCI_LATENCY_CENTRAL
+	default SCI_LATENCY_MODE_SWEEP
+	help
+	  Which measurement the Central runs after connecting and exchanging feature
+	  page 1. Each mode is selected by stacking a mode .conf onto central.conf
+	  (e.g. -DEXTRA_CONF_FILE="central.conf;mode_ecv_load.conf"). The default is
+	  the RCV 1.25 ms + subrate-factor sweep.
+
+config SCI_LATENCY_MODE_SWEEP
+	bool "RCV 1.25 ms + subrate-factor sweep (default)"
+	help
+	  Drive the link to 1.25 ms via the Connection Rate Update procedure, then
+	  sweep the subrate factor {1, 2, 4, 8} logging round-trip GATT latency. This
+	  is the original tester behaviour (what plain central.conf builds).
+
 config SCI_LATENCY_ECV_SWEEP
 	bool "ECV: sweep the sub-1.25 ms band 1125..375 us (find the HW floor)"
-	depends on SCI_LATENCY_CENTRAL
 	help
 	  Instead of a fixed 1.25 ms interval + subrate sweep, start just below the
 	  known-good RCV 1.25 ms and drive the link down the whole ECV (Extended
@@ -25,7 +41,6 @@ config SCI_LATENCY_ECV_SWEEP
 
 config SCI_LATENCY_PLAIN_SUBRATE
 	bool "Control: plain subrating at 7.5 ms (no SCI / Connection Rate Update)"
-	depends on SCI_LATENCY_CENTRAL
 	help
 	  Isolation control. Instead of the SCI Connection Rate Update to 1.25 ms,
 	  the Central does a standard LE connection parameter update to a 7.5 ms
@@ -33,6 +48,64 @@ config SCI_LATENCY_PLAIN_SUBRATE
 	  subrate factor. This exercises only the original subrating path, so a clean
 	  factor*interval result here vs a high floor on the 1.25 ms SCI build
 	  pinpoints whether the latency is the SCI interaction or subrating itself.
+
+config SCI_LATENCY_MODE_FSU_SWAP
+	bool "FSU swap: negotiate 150->floor->150 us tIFS on a quiet link"
+	help
+	  Isolate the Frame Space Update inter-frame-space swap (Core 6.2 5.1.30.1)
+	  from ECV interval timing. On a quiescent 7.5 ms link with no other traffic
+	  in flight, negotiate FSU down from 150 us to the controller floor
+	  (BT_CTLR_FSU_MIN_FRAME_SPACE_US), soak 30 s with 1 GATT read/s, then
+	  negotiate back up to 150 us and soak 10 s more -- exercising the swap in
+	  both directions. The naive apply has no transitional RX-window widening, so
+	  the swap event may drop a packet on real radios; this mode is the first OTA
+	  test of that. Verdict is PASS iff zero disconnects and zero read failures.
+
+config SCI_LATENCY_MODE_ECV_LOAD
+	bool "ECV load: stream the ZMK-split pointing load at an ECV interval"
+	select BT_USER_PHY_UPDATE
+	help
+	  Drive the link to an ECV interval (SCI_LATENCY_ECV_INTERVAL_125US), request
+	  2M PHY, optionally negotiate FSU (SCI_LATENCY_ECV_FSU, AFTER the conn-rate
+	  change so the tIFS reset does not undo it), then have the peripheral stream
+	  one 8-byte ZMK input-event notification per connection interval for
+	  SCI_LATENCY_SOAK_SECONDS. The Central counts delivered vs OFFERED (a
+	  tick-ceil of the generator period), sequence gaps, and -- if the controller
+	  test hooks are enabled -- the connection-event count. Verdict is PASS iff
+	  the link survived, delivered >= 90% of offered, and there were zero gaps.
+
+endchoice
+
+config SCI_LATENCY_ECV_INTERVAL_125US
+	int "ECV load target connection interval (125 us units)"
+	depends on SCI_LATENCY_MODE_ECV_LOAD
+	default 6
+	range 3 10
+	help
+	  Connection interval the ECV_LOAD mode drives the link to, in 125 us units:
+	  6 = 750 us, 5 = 625 us, 4 = 500 us, 3 = 375 us. The controller must accept
+	  it: the probe .conf opens the ECV floor via
+	  CONFIG_BT_CTLR_SCI_ECV_INTERVAL_MIN_125US=3 (production default is 5/625 us).
+
+config SCI_LATENCY_ECV_FSU
+	bool "ECV load: negotiate FSU after the interval change"
+	depends on SCI_LATENCY_MODE_ECV_LOAD
+	default y
+	help
+	  In the ECV_LOAD mode, after driving the link to the ECV interval, negotiate
+	  a Frame Space Update down to the controller floor
+	  (BT_CTLR_FSU_MIN_FRAME_SPACE_US, 80 us). The FSU must run AFTER the conn-rate
+	  change: the conn-rate apply resets tIFS to the standard 150 us, so an earlier
+	  FSU would be undone (ull_conn.c:2784). Set n for the airtime-vs-scheduler
+	  control run (same load at the standard 150 us tIFS).
+
+config SCI_LATENCY_SOAK_SECONDS
+	int "ECV load soak duration (seconds)"
+	depends on SCI_LATENCY_MODE_ECV_LOAD
+	default 30
+	help
+	  How long the ECV_LOAD mode streams the ZMK-split pointing load and counts
+	  delivered/offered/gaps. Interim RESULT lines are logged every 5 s.
 
 config SCI_LATENCY_PLAIN_INTERVAL_UNITS
 	int "Plain-subrate connection interval (1.25 ms units)"

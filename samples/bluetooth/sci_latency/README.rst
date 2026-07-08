@@ -79,6 +79,73 @@ determines. Example output (the floor shown is illustrative, not a prediction)::
       750 us | link DROPPED applying interval -- floor reached
    ECV sweep complete. Reset (J-Link/GDB) to re-run.
 
+FSU swap isolation (MODE_FSU_SWAP)
+==================================
+
+Isolates the Frame Space Update inter-frame-space swap (Core 6.2 Section
+5.1.30.1) from ECV interval timing. On a quiescent 7.5 ms link with no other
+traffic in flight, the central negotiates FSU **150 us -> the controller floor
+(80 us)**, soaks 30 s with one GATT read/s, then negotiates **back up to 150
+us** and soaks 10 s more -- exercising the swap in both directions. The naive
+apply has no transitional RX-window widening, so the swap event may drop a
+packet on a real radio; this is the first over-the-air test of that. Build the
+central by stacking ``mode_fsu_swap.conf`` onto ``central.conf`` (the peripheral
+is unchanged)::
+
+   west build -b nrf54l15dk/nrf54l15/cpuapp -d build/central \
+       samples/bluetooth/sci_latency \
+       -- -DEXTRA_CONF_FILE="central.conf;mode_fsu_swap.conf"
+
+Verdict is ``PASS`` iff there were zero disconnects and zero read failures over
+the full 40 s.
+
+ECV under the ZMK-split pointing load (MODE_ECV_LOAD)
+====================================================
+
+The load-bearing hardware re-test of the empty-PDU floor sweep. The central
+drives the link to an ECV interval (default 750 us), requests 2M PHY, optionally
+negotiates FSU down to the 80 us floor (**after** the interval change, since the
+conn-rate apply resets tIFS to 150 us), subscribes to the peripheral's load
+characteristic, and soaks while the peripheral streams **one 8-byte ZMK
+input-event notification per connection interval**. It counts delivered vs
+*offered* (a tick-ceil of the generator period), sequence gaps, and -- with the
+controller test hooks enabled -- the connection-event count::
+
+   west build -b nrf54l15dk/nrf54l15/cpuapp -d build/central \
+       samples/bluetooth/sci_latency \
+       -- -DEXTRA_CONF_FILE="central.conf;mode_ecv_load.conf"
+
+Choose the interval, FSU on/off, and soak length with extra ``-D`` flags, e.g.
+625 us with FSU off (the airtime-vs-scheduler control run)::
+
+   -- -DEXTRA_CONF_FILE="central.conf;mode_ecv_load.conf" \
+      -DCONFIG_SCI_LATENCY_ECV_INTERVAL_125US=5 \
+      -DCONFIG_SCI_LATENCY_ECV_FSU=n
+
+``mode_ecv_load.conf`` opens the controller ECV floor to the spec minimum
+(``CONFIG_BT_CTLR_SCI_ECV_INTERVAL_MIN_125US=3``) for the sub-625 us probe
+builds; the production default (5 = 625 us) is untouched. Verdict is ``PASS``
+iff the link survived, delivered >= 90% of *offered*, and there were zero gaps.
+
+Dual-timer A/B arm (overlay-dualtimer.conf)
+===========================================
+
+An orthogonal overlay that flips the nRF54L controller from the single-TIMER10
+architecture to the dual-timer architecture (EVENT_TIMER = NRF_TIMER00),
+dropping the 80 us per-event ISR-latency overhead to 0. Stack it **last** onto
+any central or peripheral build to run its arm against the single-timer numbers::
+
+   -- -DEXTRA_CONF_FILE="central.conf;mode_ecv_load.conf;overlay-dualtimer.conf"
+   -- -DEXTRA_CONF_FILE="peripheral.conf;overlay-dualtimer.conf"
+
+Result-line grammar
+===================
+
+Every data line the new modes emit is prefixed ``RESULT:`` and each run ends
+with exactly one ``VERDICT: PASS ...`` or ``VERDICT: FAIL ...`` line, so a run
+can be graded straight out of the console log (grep ``^.*RESULT:`` /
+``^.*VERDICT:``).
+
 Observe and drive
 *****************
 
