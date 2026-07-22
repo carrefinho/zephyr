@@ -118,6 +118,12 @@
 #if defined(CONFIG_BT_CTLR_SW_SWITCH_SINGLE_TIMER)
 #define HAL_SW_SWITCH_TIMER_CLEAR_PPI HAL_RADIO_END_TIME_CAPTURE_PPI
 #else /* !CONFIG_BT_CTLR_SW_SWITCH_SINGLE_TIMER */
+/* NOTE: must be a channel that exists on every supported DPPIC -- the 4.1-era
+ * value 24 does not exist on the nRF54L's 24-channel (0..23) DPPIC10, which
+ * silently killed the PHYEND -> SW_SWITCH_TIMER CLEAR chain and the sw-switch
+ * group enable that shares this channel (radio receives but never transmits).
+ * Channel 5 is valid and free on nRF53 and nRF54L.
+ */
 #define HAL_SW_SWITCH_TIMER_CLEAR_PPI 5
 #endif /* !CONFIG_BT_CTLR_SW_SWITCH_SINGLE_TIMER */
 

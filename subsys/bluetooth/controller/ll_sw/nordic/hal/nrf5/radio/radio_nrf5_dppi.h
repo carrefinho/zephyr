@@ -19,18 +19,39 @@ static inline void hal_radio_nrf_ppi_channels_disable(uint32_t mask)
 	nrf_dppi_channels_disable(NRF_DPPIC, mask);
 #if defined(CONFIG_SOC_COMPATIBLE_NRF54LX) && !defined(CONFIG_BT_CTLR_SW_SWITCH_SINGLE_TIMER) && \
 	!defined(CONFIG_BT_CTLR_TIFS_HW)
-	/* Dual-timer mode: if any EVENT_TIMER-related DPPIC10 channel is being
-	 * disabled, also disable all DPPIC00 channels used for EVENT_TIMER = NRF_TIMER00
-	 * cross-domain connections.
+	/* Dual-timer mode: for each EVENT_TIMER-related DPPIC10 channel in the
+	 * mask, also disable its DPPIC00 twin on the NRF_TIMER00 side of the
+	 * bridge -- and ONLY that twin. A bulk disable here is wrong: these
+	 * disables are issued mid-event (e.g. HCTO cancel after the access
+	 * address), and other DPPIC00 bridges (event-timer START, radio enable
+	 * on tick, END-time capture) must stay armed for the remainder of the
+	 * event. Mirrors the per-channel enables in the *_ppi_config() fns.
 	 */
-	if (mask & (BIT(HAL_EVENT_TIMER_START_PPI) |
-		    BIT(HAL_RADIO_ENABLE_TX_ON_TICK_PPI) |
-		    BIT(HAL_RADIO_READY_TIME_CAPTURE_PPI) |
-		    BIT(HAL_RADIO_RECV_TIMEOUT_CANCEL_PPI) |
-		    BIT(HAL_RADIO_DISABLE_ON_HCTO_PPI) |
-		    BIT(HAL_RADIO_END_TIME_CAPTURE_PPI))) {
-		nrf_dppi_channels_disable(NRF_DPPIC00,
-					  HAL_NRF54LX_DUAL_TIMER_DPPIC00_CHANNELS_USED);
+	{
+		uint32_t mask00 = 0U;
+
+		if (mask & BIT(HAL_EVENT_TIMER_START_PPI)) {
+			mask00 |= BIT(HAL_NRF54LX_DUAL_TIMER_EVENT_TIMER_START_DPPIC00);
+		}
+		if (mask & (BIT(HAL_RADIO_ENABLE_TX_ON_TICK_PPI) |
+			    BIT(HAL_RADIO_ENABLE_RX_ON_TICK_PPI))) {
+			mask00 |= BIT(HAL_NRF54LX_DUAL_TIMER_RADIO_ENABLE_ON_TICK_DPPIC00);
+		}
+		if (mask & BIT(HAL_RADIO_READY_TIME_CAPTURE_PPI)) {
+			mask00 |= BIT(HAL_NRF54LX_DUAL_TIMER_RADIO_READY_CAPTURE_DPPIC00);
+		}
+		if (mask & BIT(HAL_RADIO_RECV_TIMEOUT_CANCEL_PPI)) {
+			mask00 |= BIT(HAL_NRF54LX_DUAL_TIMER_RECV_TIMEOUT_CANCEL_DPPIC00);
+		}
+		if (mask & BIT(HAL_RADIO_DISABLE_ON_HCTO_PPI)) {
+			mask00 |= BIT(HAL_NRF54LX_DUAL_TIMER_RADIO_DISABLE_ON_HCTO_DPPIC00);
+		}
+		if (mask & BIT(HAL_RADIO_END_TIME_CAPTURE_PPI)) {
+			mask00 |= BIT(HAL_NRF54LX_DUAL_TIMER_END_TIME_CAPTURE_DPPIC00);
+		}
+		if (mask00 != 0U) {
+			nrf_dppi_channels_disable(NRF_DPPIC00, mask00);
+		}
 	}
 #endif /* NRF54LX && !SINGLE_TIMER && !TIFS_HW */
 }
