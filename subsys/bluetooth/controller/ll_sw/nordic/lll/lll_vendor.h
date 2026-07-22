@@ -38,9 +38,20 @@
 #define EVENT_OVERHEAD_START_US       275 /* 9 RTC ticks */
 #endif /* !CONFIG_BT_OBSERVER */
 #else /* !CONFIG_BT_CTLR_ADV_EXT */
+#if defined(CONFIG_SOC_COMPATIBLE_NRF54LX) && !defined(CONFIG_BT_CTLR_SW_SWITCH_SINGLE_TIMER) && \
+	!defined(CONFIG_BT_CTLR_TIFS_HW)
+/* nRF54L dual-timer mode: the 80 us single-timer ISR-latency addend
+ * (HAL_RADIO_ISR_LATENCY_MAX_US) no longer consumes this budget in
+ * lll_preempt_calc, so the prepare-to-anchor margin can shrink by the same
+ * amount. This is the latency payoff of the dual-timer architecture: the
+ * prepare cutoff is the dominant fixed term in one-way notification latency.
+ */
+#define EVENT_OVERHEAD_START_US       195 /* was 275 - 80 */
+#else /* single-timer or TIFS_HW */
 /* Active connection in peripheral role with additional advertising state.
  */
 #define EVENT_OVERHEAD_START_US       275 /* 9 RTC ticks */
+#endif /* single-timer or TIFS_HW */
 #endif /* !CONFIG_BT_CTLR_ADV_EXT */
 
 /* Worst-case time margin needed after event end-time in the air
