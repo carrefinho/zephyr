@@ -1336,20 +1336,19 @@ static volatile uint8_t fsu_status = 0xFFU;
 static volatile uint16_t fsu_frame_space;
 static volatile uint8_t fsu_initiator = 0xFFU;
 
-static void fsu_updated(struct bt_conn *conn, uint8_t status,
-			const struct bt_conn_le_frame_space_info *params)
+static void fsu_updated(struct bt_conn *conn,
+			const struct bt_conn_le_frame_space_updated *params)
 {
 	ARG_UNUSED(conn);
 
-	fsu_status = status;
-	if (params != NULL) {
+	fsu_status = params->status;
+	if (params->status == BT_HCI_ERR_SUCCESS) {
 		fsu_frame_space = params->frame_space;
-		fsu_initiator = params->initiator;
+		fsu_initiator = (uint8_t)params->initiator;
 	}
 	fsu_done = true;
 	printk("Central frame space updated: status 0x%02x fs %u us initiator %u\n",
-	       status, params != NULL ? params->frame_space : 0U,
-	       params != NULL ? params->initiator : 0xFFU);
+	       params->status, params->frame_space, (uint8_t)params->initiator);
 }
 
 static struct bt_conn_cb fsu_conn_callbacks = {
@@ -1364,7 +1363,7 @@ static struct bt_conn_cb fsu_conn_callbacks = {
 
 static void test_central_main_fsu(void)
 {
-	struct bt_conn_le_frame_space_param param = {
+	struct bt_conn_le_frame_space_update_param param = {
 		.frame_space_min = 60U,   /* below the 80 us floor -> clamped up */
 		.frame_space_max = 150U,
 		.phys = BT_HCI_LE_FRAME_SPACE_UPDATE_PHY_1M_MASK |
@@ -1488,7 +1487,7 @@ static void test_central_main_fsu(void)
 	 * check passes 40/70, so the controller responder is the gate.
 	 */
 	{
-		struct bt_conn_le_frame_space_param below = param;
+		struct bt_conn_le_frame_space_update_param below = param;
 
 		below.frame_space_min = 40U;
 		below.frame_space_max = 70U;
@@ -2519,7 +2518,7 @@ static void ecv_load_run(uint16_t interval_125us, bool use_fsu, enum ecv_load_mo
 		 * the tIFS trio to the standard 150 us (ull_conn.c, the tIFS leg of
 		 * the decoupled apply), so an earlier negotiation would be undone.
 		 */
-		struct bt_conn_le_frame_space_param fsp = {
+		struct bt_conn_le_frame_space_update_param fsp = {
 			.frame_space_min = ECV_LOAD_FSU_REQ_MIN_US,
 			.frame_space_max = ECV_LOAD_FSU_REQ_MAX_US,
 			.phys = BT_HCI_LE_FRAME_SPACE_UPDATE_PHY_1M_MASK |

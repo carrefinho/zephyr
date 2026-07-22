@@ -263,13 +263,13 @@ static void le_param_updated(struct bt_conn *conn, uint16_t interval,
 #endif
 
 #if defined(CONFIG_SCI_LATENCY_MODE_FSU_SWAP) || defined(CONFIG_SCI_LATENCY_MODE_ECV_LOAD)
-static void fsu_updated(struct bt_conn *conn, uint8_t status,
-			const struct bt_conn_le_frame_space_info *params)
+static void fsu_updated(struct bt_conn *conn,
+			const struct bt_conn_le_frame_space_updated *params)
 {
-	fsu_status = status;
-	if (params != NULL) {
+	fsu_status = params->status;
+	if (params->status == BT_HCI_ERR_SUCCESS) {
 		fsu_frame_space = params->frame_space;
-		fsu_initiator = params->initiator;
+		fsu_initiator = (uint8_t)params->initiator;
 	}
 	k_sem_give(&sem_fsu);
 }
@@ -488,7 +488,7 @@ static int ecv_interval_sweep(void)
  */
 static int fsu_negotiate(uint16_t fs_min, uint16_t fs_max)
 {
-	struct bt_conn_le_frame_space_param p = {
+	struct bt_conn_le_frame_space_update_param p = {
 		.frame_space_min = fs_min,
 		.frame_space_max = fs_max,
 		.phys = BT_HCI_LE_FRAME_SPACE_UPDATE_PHY_1M_MASK |
@@ -1328,10 +1328,10 @@ static void subrate_changed(struct bt_conn *conn,
 }
 
 #if defined(CONFIG_BT_FRAME_SPACE_UPDATE)
-static void frame_space_updated(struct bt_conn *conn, uint8_t status,
-				const struct bt_conn_le_frame_space_info *params)
+static void frame_space_updated(struct bt_conn *conn,
+				const struct bt_conn_le_frame_space_updated *params)
 {
-	if (status == BT_HCI_ERR_SUCCESS && params != NULL) {
+	if (params->status == BT_HCI_ERR_SUCCESS) {
 		LOG_INF("Frame space updated (responder): %u us, initiator %u",
 			params->frame_space, params->initiator);
 	}
