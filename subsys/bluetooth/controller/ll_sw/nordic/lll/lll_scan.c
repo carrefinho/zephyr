@@ -49,6 +49,8 @@
 #define ADV_CHAN_MAX 3U
 
 static int init_reset(void);
+volatile uint32_t sci_dbg_cnt[8]; /* bench debug: scan LLL path counters */
+
 static int prepare_cb(struct lll_prepare_param *p);
 static int resume_prepare_cb(struct lll_prepare_param *p);
 static int common_prepare_cb(struct lll_prepare_param *p, bool is_resume);
@@ -320,6 +322,7 @@ static int init_reset(void)
 
 static int prepare_cb(struct lll_prepare_param *p)
 {
+	sci_dbg_cnt[0]++;
 	return common_prepare_cb(p, false);
 }
 
@@ -605,6 +608,7 @@ static int is_abort_cb(void *next, void *curr, lll_prepare_cb_t *resume_cb)
 
 static void abort_cb(struct lll_prepare_param *prepare_param, void *param)
 {
+	sci_dbg_cnt[7]++;
 #if defined(CONFIG_BT_CENTRAL)
 	struct lll_scan *lll = param;
 #endif /* CONFIG_BT_CENTRAL */
@@ -663,6 +667,7 @@ static void ticker_op_start_cb(uint32_t status, void *param)
 
 static void isr_rx(void *param)
 {
+	sci_dbg_cnt[1]++;
 	struct node_rx_pdu *node_rx;
 	uint8_t phy_flags_rx;
 	struct lll_scan *lll;
@@ -776,7 +781,9 @@ isr_rx_do_close:
 
 static void isr_tx(void *param)
 {
-	struct node_rx_pdu *node_rx_prof;
+struct node_rx_pdu *node_rx_prof;
+
+	sci_dbg_cnt[2]++;
 	struct node_rx_pdu *node_rx;
 	uint32_t hcto;
 
@@ -903,6 +910,7 @@ static void isr_common_done(void *param)
 
 static void isr_done(void *param)
 {
+	sci_dbg_cnt[3]++;
 	isr_common_done(param);
 
 #if defined(HAL_RADIO_GPIO_HAVE_LNA_PIN)
@@ -924,6 +932,7 @@ static void isr_done(void *param)
 
 static void isr_window(void *param)
 {
+	sci_dbg_cnt[4]++;
 	uint32_t remainder_us;
 	struct lll_scan *lll;
 
@@ -1008,6 +1017,7 @@ static void isr_window(void *param)
 	(EVENT_OVERHEAD_PREEMPT_US <= EVENT_OVERHEAD_PREEMPT_MIN_US)
 static void isr_abort(void *param)
 {
+	sci_dbg_cnt[5]++;
 	/* Clear radio status and events */
 	lll_isr_status_reset();
 
@@ -1032,6 +1042,7 @@ static void isr_abort(void *param)
 
 static void isr_done_cleanup(void *param)
 {
+	sci_dbg_cnt[6]++;
 	struct lll_scan *lll;
 	bool is_resume;
 

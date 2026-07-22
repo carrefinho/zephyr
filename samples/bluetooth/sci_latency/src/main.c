@@ -186,8 +186,13 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 	}
 }
 
+extern volatile uint32_t sci_dbg_cnt[8]; /* lll_scan.c bench counters */
+
 static void connected(struct bt_conn *conn, uint8_t err)
 {
+	printk("DBG: scan cnt prep %u rx %u tx %u done %u win %u abrt %u dcln %u acb %u\n",
+	       sci_dbg_cnt[0], sci_dbg_cnt[1], sci_dbg_cnt[2], sci_dbg_cnt[3],
+	       sci_dbg_cnt[4], sci_dbg_cnt[5], sci_dbg_cnt[6], sci_dbg_cnt[7]);
 	if (err) {
 		LOG_ERR("connect failed (0x%02x)", err);
 		bt_conn_unref(default_conn);
