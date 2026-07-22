@@ -1040,6 +1040,38 @@ void lll_conn_pdu_tx_prep(struct lll_conn *lll, struct pdu_data **pdu_data_tx)
 #endif /* CONFIG_BT_CTLR_DATA_LENGTH_CLEAR */
 	}
 
+#if defined(CONFIG_SCI_LATENCY_GPIO_ONEWAY)
+	if (!lll->empty && (p->len != 0U)) {
+		/* One-way TX-path breakdown (sci_latency bench): first pick of a
+		 * fresh PDU -- accumulate gen->pick / host-enq->pick / lllq->pick.
+		 * sci_txp_acc: [0..3]=gen (min,sum,max,n), [4..7]=enq, [8..11]=lll.
+		 */
+		extern volatile uint32_t sci_dbg_gen, sci_dbg_tx_enq, sci_dbg_tx_lll;
+		extern volatile uint32_t sci_dbg_tx_flag, sci_txp_acc[12];
+
+		if (sci_dbg_tx_flag != 0U) {
+			uint32_t now = k_cycle_get_32();
+			uint32_t d[3] = { now - sci_dbg_gen, now - sci_dbg_tx_enq,
+					  now - sci_dbg_tx_lll };
+
+			for (uint8_t i = 0U; i < 3U; i++) {
+				uint32_t us = k_cyc_to_us_floor32(d[i]);
+				volatile uint32_t *a = &sci_txp_acc[i * 4U];
+
+				if ((a[3] == 0U) || (us < a[0])) {
+					a[0] = us;
+				}
+				a[1] += us;
+				if (us > a[2]) {
+					a[2] = us;
+				}
+				a[3]++;
+			}
+			sci_dbg_tx_flag = 0U;
+		}
+	}
+#endif /* CONFIG_SCI_LATENCY_GPIO_ONEWAY */
+
 	/* A non-empty Tx keeps the subrating continuation window open. Done here
 	 * (the shared Tx-prep) so the Central's first PDU prepared in
 	 * lll_central_prepare is counted too, not only the Tx prepared in isr_rx.

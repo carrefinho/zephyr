@@ -319,6 +319,16 @@ int ll_tx_mem_enqueue(uint16_t handle, void *tx)
 
 	MFIFO_ENQUEUE(conn_tx, idx);
 
+#if defined(CONFIG_SCI_LATENCY_GPIO_ONEWAY)
+	{
+		/* One-way TX-path breakdown stamps (sci_latency bench). */
+		extern volatile uint32_t sci_dbg_tx_enq, sci_dbg_tx_flag;
+
+		sci_dbg_tx_enq = k_cycle_get_32();
+		sci_dbg_tx_flag = 1U;
+	}
+#endif
+
 #if !defined(CONFIG_BT_CTLR_LOW_LAT)
 	if (ull_ref_get(&conn->ull)) {
 #if defined(CONFIG_BT_CTLR_FORCE_MD_AUTO)
@@ -1948,6 +1958,15 @@ void ull_conn_tx_lll_enqueue(struct ll_conn *conn, uint8_t count)
 
 		/* Enqueue towards LLL */
 		memq_enqueue(link, tx, &conn->lll.memq_tx.tail);
+
+#if defined(CONFIG_SCI_LATENCY_GPIO_ONEWAY)
+		{
+			/* One-way TX-path breakdown stamp (sci_latency bench). */
+			extern volatile uint32_t sci_dbg_tx_lll;
+
+			sci_dbg_tx_lll = k_cycle_get_32();
+		}
+#endif
 	}
 }
 

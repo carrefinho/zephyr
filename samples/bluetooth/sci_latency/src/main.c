@@ -54,6 +54,17 @@ LOG_MODULE_REGISTER(sci_latency, LOG_LEVEL_INF);
 volatile uint32_t sci_dbg_fifo_cyc;
 volatile uint32_t sci_dbg_acl_cyc;
 
+/* Peripheral TX-path breakdown stamps + accumulators (written by the sample's
+ * generator, ull_conn.c and lll_conn.c; see the pick-site in lll_conn.c).
+ * sci_txp_acc layout: [0..3] gen->pick (min,sum,max,n), [4..7] host-enq->pick,
+ * [8..11] lll-queue->pick.
+ */
+volatile uint32_t sci_dbg_gen;
+volatile uint32_t sci_dbg_tx_enq;
+volatile uint32_t sci_dbg_tx_lll;
+volatile uint32_t sci_dbg_tx_flag;
+volatile uint32_t sci_txp_acc[12];
+
 /* Simple min/avg/max accumulator for the stage deltas. */
 struct ow_acc {
 	uint32_t min, max, n;
@@ -1391,6 +1402,7 @@ int main(void)
 
 		uint32_t t0 = k_cycle_get_32();
 
+		sci_dbg_gen = t0;
 		if (bt_gatt_notify(periph_conn, &load_svc.attrs[2], payload,
 				   sizeof(payload)) == 0) {
 			ow_acc_add(&notify_cost, k_cyc_to_us_floor32(k_cycle_get_32() - t0));
@@ -1400,6 +1412,16 @@ int main(void)
 				       "max %u us (n %u)\n", notify_cost.min,
 				       (uint32_t)(notify_cost.sum / notify_cost.n),
 				       notify_cost.max, notify_cost.n);
+				printk("RESULT: TXPATH gen->pick %u/%u/%u us; "
+				       "enq->pick %u/%u/%u us; lllq->pick %u/%u/%u us "
+				       "(n %u)\n",
+				       sci_txp_acc[0],
+				       sci_txp_acc[3] ? sci_txp_acc[1] / sci_txp_acc[3] : 0U,
+				       sci_txp_acc[2], sci_txp_acc[4],
+				       sci_txp_acc[7] ? sci_txp_acc[5] / sci_txp_acc[7] : 0U,
+				       sci_txp_acc[6], sci_txp_acc[8],
+				       sci_txp_acc[11] ? sci_txp_acc[9] / sci_txp_acc[11] : 0U,
+				       sci_txp_acc[10], sci_txp_acc[3]);
 			}
 		}
 #else
