@@ -30,11 +30,48 @@
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/hci_types.h>
 #include <zephyr/logging/log.h>
+#if defined(CONFIG_SCI_LATENCY_GPIO_ONEWAY)
+#include <zephyr/drivers/gpio.h>
+#endif
 
 LOG_MODULE_REGISTER(sci_latency, LOG_LEVEL_INF);
 
 #define DEVICE_NAME      CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_LEN  (sizeof(DEVICE_NAME) - 1)
+
+#if defined(CONFIG_SCI_LATENCY_GPIO_ONEWAY)
+/* DK-to-DK cross-wire for the one-way latency measurement: P1.11 on both DKs
+ * (plus GND). Peripheral output, central GPIOTE-timestamped input.
+ */
+#define ONEWAY_GPIO_NODE DT_NODELABEL(gpio1)
+#define ONEWAY_GPIO_PIN  11
+
+/* Pipeline stage stamps written by the controller's HCI driver (hci_driver.c)
+ * for the one-way breakdown: ACL node leaving the controller (prio_recv_thread
+ * fifo put) and ACL encoded in recv_thread entering bt_recv. Referenced from
+ * both roles (the peripheral also receives ACLs), defined once here.
+ */
+volatile uint32_t sci_dbg_fifo_cyc;
+volatile uint32_t sci_dbg_acl_cyc;
+
+/* Simple min/avg/max accumulator for the stage deltas. */
+struct ow_acc {
+	uint32_t min, max, n;
+	uint64_t sum;
+};
+
+static void ow_acc_add(struct ow_acc *a, uint32_t us)
+{
+	if (a->n == 0U || us < a->min) {
+		a->min = us;
+	}
+	if (us > a->max) {
+		a->max = us;
+	}
+	a->sum += us;
+	a->n++;
+}
+#endif
 
 /* ZMK-split pointing-load characteristic (shared by both roles for the ECV_LOAD
  * mode). The peripheral streams one 8-byte input-event payload per connection
@@ -568,6 +605,135 @@ static volatile bool load_seq_seen;
 static uint32_t load_prev_seq;
 static volatile bool load_subscribed;
 
+#if defined(CONFIG_SCI_LATENCY_GPIO_ONEWAY)
+/* One-way latency: the peripheral drives P1.11 to the sequence parity before
+ * each notify attempt, so edge k marks sequence k's first attempt. The GPIOTE
+ * ISR ring-buffers edge timestamps; the notify callback pairs them by sequence
+ * number -- both timestamps on this device's clock.
+ */
+#define OW_RING_SZ 64U
+static uint32_t ow_edge_ts[OW_RING_SZ];
+static volatile uint32_t ow_edge_cnt;
+static uint32_t ow_seq0;
+static bool ow_have_seq0;
+static volatile uint32_t ow_min, ow_max, ow_n, ow_unmatched;
+static volatile uint64_t ow_sum;
+static struct gpio_callback ow_cb_data;
+
+/* Stage deltas, computed per notification in the GATT callback:
+ * fifo->acl = controller prio_recv_thread handoff through recv_thread encode;
+ * acl->cb   = bt_recv -> RX workqueue -> L2CAP/ATT/GATT -> app callback.
+ */
+static struct ow_acc ow_stage_fifo2acl, ow_stage_acl2cb;
+
+/* Latency distribution: 50 us buckets to 6.4 ms + overflow. Fine enough to
+ * separate retransmission quantisation (peaks at k x interval) from wall-clock
+ * interference blackouts (interval-independent smear).
+ */
+#define OW_HIST_BUCKET_US 50U
+#define OW_HIST_BUCKETS   128U
+static uint32_t ow_hist[OW_HIST_BUCKETS + 1U]; /* [last] = overflow */
+
+static uint32_t ow_percentile(uint32_t pct_x100)
+{
+	/* pct_x100: e.g. 9999 = p99.99. Returns the bucket upper edge in us. */
+	uint64_t target = ((uint64_t)ow_n * pct_x100 + 9999U) / 10000U;
+	uint64_t cum = 0U;
+
+	for (uint32_t i = 0U; i <= OW_HIST_BUCKETS; i++) {
+		cum += ow_hist[i];
+		if (cum >= target) {
+			return (i + 1U) * OW_HIST_BUCKET_US;
+		}
+	}
+	return ow_max;
+}
+
+static uint32_t ow_last_edge;
+static volatile uint32_t ow_glitches;
+
+static void ow_edge_isr(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	uint32_t now = k_cycle_get_32();
+	uint32_t cnt = ow_edge_cnt;
+
+	/* Glitch rejection: real edges are >= one generator period (>= 375 us)
+	 * apart, and the level alternates deterministically with the edge count
+	 * (the peripheral writes seq parity). Contact bounce / EMI pickup on the
+	 * cross-wire fails one of the two; count it instead of corrupting the
+	 * pairing.
+	 */
+	if (cnt > 0U && k_cyc_to_us_floor32(now - ow_last_edge) < 150U) {
+		ow_glitches++;
+		return;
+	}
+	if (gpio_pin_get_raw(dev, ONEWAY_GPIO_PIN) != (int)((cnt & 1U) ^ 1U)) {
+		ow_glitches++;
+		return;
+	}
+	ow_last_edge = now;
+	ow_edge_ts[cnt % OW_RING_SZ] = now;
+	ow_edge_cnt = cnt + 1U;
+}
+
+static void ow_stats_reset(void)
+{
+	ow_min = UINT32_MAX;
+	ow_max = 0U;
+	ow_n = 0U;
+	ow_sum = 0U;
+	ow_unmatched = 0U;
+	memset(ow_hist, 0, sizeof(ow_hist));
+}
+
+static int ow_capture_init(void)
+{
+	const struct device *port = DEVICE_DT_GET(ONEWAY_GPIO_NODE);
+	int err;
+
+	ow_stats_reset();
+	err = gpio_pin_configure(port, ONEWAY_GPIO_PIN, GPIO_INPUT);
+	if (!err) {
+		gpio_init_callback(&ow_cb_data, ow_edge_isr, BIT(ONEWAY_GPIO_PIN));
+		err = gpio_add_callback(port, &ow_cb_data);
+	}
+	if (!err) {
+		err = gpio_pin_interrupt_configure(port, ONEWAY_GPIO_PIN,
+						   GPIO_INT_EDGE_BOTH);
+	}
+	return err;
+}
+
+static void ow_pair(uint32_t seq, uint32_t now)
+{
+	uint32_t cnt = ow_edge_cnt;
+	uint32_t idx;
+
+	if (!ow_have_seq0) {
+		/* First notification seen; its edge is the first edge captured. */
+		ow_seq0 = seq;
+		ow_have_seq0 = true;
+	}
+	idx = seq - ow_seq0;
+	if (idx >= cnt || (cnt - idx) > OW_RING_SZ) {
+		ow_unmatched++;
+		return;
+	}
+
+	uint32_t us = k_cyc_to_us_floor32(now - ow_edge_ts[idx % OW_RING_SZ]);
+
+	if (us < ow_min) {
+		ow_min = us;
+	}
+	if (us > ow_max) {
+		ow_max = us;
+	}
+	ow_sum += us;
+	ow_n++;
+	ow_hist[MIN(us / OW_HIST_BUCKET_US, OW_HIST_BUCKETS)]++;
+}
+#endif /* CONFIG_SCI_LATENCY_GPIO_ONEWAY */
+
 static uint8_t load_notify_cb(struct bt_conn *conn, struct bt_gatt_subscribe_params *params,
 			      const void *data, uint16_t length)
 {
@@ -581,6 +747,18 @@ static uint8_t load_notify_cb(struct bt_conn *conn, struct bt_gatt_subscribe_par
 	if (length == 8U) {
 		uint32_t seq = sys_get_le32((const uint8_t *)data + 3);
 
+#if defined(CONFIG_SCI_LATENCY_GPIO_ONEWAY)
+		uint32_t now = k_cycle_get_32();
+		uint32_t fifo_cyc = sci_dbg_fifo_cyc;
+		uint32_t acl_cyc = sci_dbg_acl_cyc;
+
+		ow_pair(seq, now);
+		/* Stage deltas from the driver stamps (most-recent ACL; exact at
+		 * one notification per callback, min values valid regardless).
+		 */
+		ow_acc_add(&ow_stage_fifo2acl, k_cyc_to_us_floor32(acl_cyc - fifo_cyc));
+		ow_acc_add(&ow_stage_acl2cb, k_cyc_to_us_floor32(now - acl_cyc));
+#endif
 		if (load_seq_seen && (seq != (load_prev_seq + 1U))) {
 			load_gaps++;
 		}
@@ -714,6 +892,15 @@ static int run_ecv_load(void)
 		return 0;
 	}
 
+#if defined(CONFIG_SCI_LATENCY_GPIO_ONEWAY)
+	/* Arm the edge capture BEFORE subscribing, so no edge precedes it. */
+	err = ow_capture_init();
+	if (err) {
+		printk("RESULT: ONEWAY GPIO capture init failed (err %d) -- no one-way "
+		       "figures this run\n", err);
+	}
+#endif
+
 	/* Discover + subscribe to the load characteristic. */
 	memcpy(&load_disc_uuid, BT_UUID_DECLARE_128(LOAD_SVC_UUID), sizeof(load_disc_uuid));
 	load_disc.uuid = &load_disc_uuid.uuid;
@@ -753,6 +940,9 @@ static int run_ecv_load(void)
 #endif
 
 	/* Soak. Interim RESULT lines every 5 s so a hung run is diagnosable. */
+#if defined(CONFIG_SCI_LATENCY_GPIO_ONEWAY)
+	ow_stats_reset(); /* soak-only stats; pairing state carries over */
+#endif
 	before = load_count;
 	gaps_before = load_gaps;
 	t0 = k_uptime_get();
@@ -800,6 +990,39 @@ static int run_ecv_load(void)
 	       interval_us, applied_tifs_us, use_fsu ? "on" : "off", delivered, offered,
 	       pct_off, pct, expected, gaps, ce_events, survived ? "up" : "DROPPED",
 	       elapsed_ms);
+#if defined(CONFIG_SCI_LATENCY_GPIO_ONEWAY)
+	if (ow_n > 0U) {
+		printk("RESULT: ONEWAY latency (generation edge -> notify callback) "
+		       "min %u / avg %u / max %u us over %u samples (unmatched %u, "
+		       "glitches %u)\n",
+		       ow_min, (uint32_t)(ow_sum / ow_n), ow_max, ow_n, ow_unmatched,
+		       ow_glitches);
+		printk("RESULT: ONEWAY pct p50 %u p90 %u p99 %u p99.9 %u p99.99 %u "
+		       "max %u us\n", ow_percentile(5000U), ow_percentile(9000U),
+		       ow_percentile(9900U), ow_percentile(9990U), ow_percentile(9999U),
+		       ow_max);
+		if (ow_stage_acl2cb.n > 0U) {
+			printk("RESULT: OWSTAGES ctlr-fifo->acl-encode min %u avg %u max "
+			       "%u us; acl->gatt-cb min %u avg %u max %u us (n %u)\n",
+			       ow_stage_fifo2acl.min,
+			       (uint32_t)(ow_stage_fifo2acl.sum / ow_stage_fifo2acl.n),
+			       ow_stage_fifo2acl.max, ow_stage_acl2cb.min,
+			       (uint32_t)(ow_stage_acl2cb.sum / ow_stage_acl2cb.n),
+			       ow_stage_acl2cb.max, ow_stage_acl2cb.n);
+		}
+		for (uint32_t i = 0U; i <= OW_HIST_BUCKETS; i++) {
+			if (ow_hist[i] != 0U) {
+				printk("RESULT: OWHIST %u %u\n", i * OW_HIST_BUCKET_US,
+				       ow_hist[i]);
+				/* Pace the dump so a slow serial reader keeps up. */
+				k_sleep(K_MSEC(5));
+			}
+		}
+	} else {
+		printk("RESULT: ONEWAY no paired samples (edges %u, unmatched %u) -- "
+		       "is the P1.11 cross-wire connected?\n", ow_edge_cnt, ow_unmatched);
+	}
+#endif
 
 	if (survived && gaps == 0U && pct_off >= 90U) {
 		if (default_conn) {
@@ -989,6 +1212,12 @@ static void stream_rearm(void)
 		return;
 	}
 	us = info.le.interval_us;
+#if CONFIG_SCI_LATENCY_STREAM_PERIOD_US > 0
+	/* Fixed-rate generator: decouple the offered load from the connection
+	 * interval (e.g. a 1 kHz sensor on a 625 us link).
+	 */
+	us = CONFIG_SCI_LATENCY_STREAM_PERIOD_US;
+#endif
 	if (us == 0U || us == stream_interval_us) {
 		return;
 	}
@@ -1126,6 +1355,13 @@ int main(void)
 	 * count delivery gaps; it advances ONLY on a successful queue, so a send
 	 * failure shows up at the central as a rate shortfall, not a fake gap.
 	 */
+#if defined(CONFIG_SCI_LATENCY_GPIO_ONEWAY)
+	const struct device *ow_port = DEVICE_DT_GET(ONEWAY_GPIO_NODE);
+	static struct ow_acc notify_cost;
+
+	(void)gpio_pin_configure(ow_port, ONEWAY_GPIO_PIN, GPIO_OUTPUT_LOW);
+#endif
+
 	while (true) {
 		uint8_t payload[8];
 
@@ -1141,10 +1377,32 @@ int main(void)
 		sys_put_le32(seq, &payload[3]);     /* value: sequence number */
 		payload[7] = 0x01U;                 /* sync */
 
+#if defined(CONFIG_SCI_LATENCY_GPIO_ONEWAY)
+		/* Mark sequence `seq`'s generation instant: level = parity, written
+		 * before the notify attempt. A retry of the same seq re-writes the
+		 * same level (no edge), so the peer sees exactly one edge per seq.
+		 */
+		(void)gpio_pin_set_raw(ow_port, ONEWAY_GPIO_PIN, (int)((seq & 1U) ^ 1U));
+
+		uint32_t t0 = k_cycle_get_32();
+
+		if (bt_gatt_notify(periph_conn, &load_svc.attrs[2], payload,
+				   sizeof(payload)) == 0) {
+			ow_acc_add(&notify_cost, k_cyc_to_us_floor32(k_cycle_get_32() - t0));
+			seq++;
+			if ((seq & 0x3FFFU) == 0U) {
+				printk("RESULT: NOTIFYCOST bt_gatt_notify min %u avg %u "
+				       "max %u us (n %u)\n", notify_cost.min,
+				       (uint32_t)(notify_cost.sum / notify_cost.n),
+				       notify_cost.max, notify_cost.n);
+			}
+		}
+#else
 		if (bt_gatt_notify(periph_conn, &load_svc.attrs[2], payload,
 				   sizeof(payload)) == 0) {
 			seq++;
 		}
+#endif
 	}
 
 	return 0;

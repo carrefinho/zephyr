@@ -133,4 +133,28 @@ config SCI_LATENCY_BURST_GAP_MS
 	  (awake) window = (factor-1) * interval, so the gap has to scale with the
 	  interval: ~2 ms at 1.25 ms, 50 ms at 30 ms (bsim's value).
 
+config SCI_LATENCY_STREAM_PERIOD_US
+	int "Load-stream generator period override (us)"
+	default 0
+	help
+	  0 (default): the peripheral paces one notification per connection
+	  interval (the saturating floor probe). Non-zero: fixed generator period
+	  in microseconds regardless of the interval -- e.g. 1000 models a 1 kHz
+	  pointer on a sub-millisecond link, leaving service headroom. Note the
+	  central's offered/delivered percentages assume per-CE pacing and read
+	  low under an override; the ONEWAY latency lines are the signal.
+
+config SCI_LATENCY_GPIO_ONEWAY
+	bool "GPIO cross-wire one-way latency (P1.11)"
+	select GPIO
+	help
+	  Measure true one-way notification latency over a DK-to-DK cross-wire
+	  (P1.11 <-> P1.11 plus GND). The peripheral drives P1.11 to the parity of
+	  the load-stream sequence number before each notify attempt -- a retry of
+	  the same sequence re-writes the same level, so edge k always marks
+	  sequence k's first attempt -- and the ECV_LOAD central timestamps edges
+	  via GPIOTE and pairs them to received notifications by sequence number,
+	  entirely on its own clock. Enable on BOTH the central and peripheral
+	  builds.
+
 source "Kconfig.zephyr"

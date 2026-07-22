@@ -382,6 +382,17 @@ static void prio_recv_thread(void *p1, void *p2, void *p3)
 			/* Find out and store the class for this node */
 			node_rx->hdr.user_meta = hci_get_class(node_rx);
 
+#if defined(CONFIG_SCI_LATENCY_GPIO_ONEWAY)
+			/* Pipeline stage stamp for the sci_latency one-way
+			 * breakdown: ACL data node leaves the controller
+			 * (prio_recv_thread) for the host recv_thread.
+			 */
+			if (node_rx->hdr.user_meta == HCI_CLASS_ACL_DATA) {
+				extern volatile uint32_t sci_dbg_fifo_cyc;
+
+				sci_dbg_fifo_cyc = k_cycle_get_32();
+			}
+#endif
 			buf = process_prio_evt(node_rx, &evt_flags);
 			if (buf) {
 				int err;
@@ -560,6 +571,16 @@ static inline struct net_buf *encode_node(struct node_rx_pdu *node_rx,
 		/* generate ACL data */
 		buf = bt_buf_get_rx(BT_BUF_ACL_IN, K_FOREVER);
 		hci_acl_encode(node_rx, buf);
+#if defined(CONFIG_SCI_LATENCY_GPIO_ONEWAY)
+		/* Pipeline stage stamp: ACL encoded in recv_thread, about to
+		 * enter bt_recv -> the host RX workqueue.
+		 */
+		{
+			extern volatile uint32_t sci_dbg_acl_cyc;
+
+			sci_dbg_acl_cyc = k_cycle_get_32();
+		}
+#endif
 		break;
 #endif /* CONFIG_BT_CONN */
 
