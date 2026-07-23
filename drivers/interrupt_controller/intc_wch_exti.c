@@ -89,6 +89,14 @@ void wch_exti_disable(uint8_t line)
 	regs->INTENR &= ~BIT(line);
 }
 
+void wch_exti_sw_trigger(uint8_t line)
+{
+	EXTI_TypeDef *regs = (EXTI_TypeDef *)DT_INST_REG_ADDR(0);
+
+	/* The bit is cleared by hardware together with the pending flag */
+	regs->SWIEVR |= BIT(line);
+}
+
 int wch_exti_configure(uint8_t line, wch_exti_callback_handler_t callback, void *user)
 {
 	const struct device *const dev = DEVICE_DT_INST_GET(0);

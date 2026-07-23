@@ -32,6 +32,9 @@ void wch_exti_enable(uint8_t line);
 /* Disable the EXTI interrupt for `line` */
 void wch_exti_disable(uint8_t line);
 
+/* Software-trigger the EXTI interrupt for `line` */
+void wch_exti_sw_trigger(uint8_t line);
+
 /* Set the trigger mode for `line` */
 void wch_exti_set_trigger(uint8_t line, enum wch_exti_trigger trigger);
 

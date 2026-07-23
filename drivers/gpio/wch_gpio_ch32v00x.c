@@ -221,6 +221,49 @@ static int gpio_ch32v00x_pin_interrupt_configure(const struct device *dev, gpio_
 
 		wch_exti_enable(pin);
 		break;
+	case GPIO_INT_MODE_LEVEL:
+		err = wch_exti_configure(pin, gpio_ch32v00x_isr, (void *)dev);
+		if (err != 0) {
+			break;
+		}
+
+		err = gpio_ch32v00x_configure_exti(dev, pin);
+		if (err != 0) {
+			break;
+		}
+
+		/*
+		 * The EXTI unit is edge-triggered only. Emulate level
+		 * semantics by arming the edge leading into the requested
+		 * level and software-pending the line if it is already at
+		 * that level, so a level present before enabling is not
+		 * lost. Unlike a true level interrupt this fires once per
+		 * event, which satisfies callers that disable the interrupt
+		 * from the callback and re-arm it later (e.g. keyboard
+		 * matrix scan drivers).
+		 */
+		switch (trigger) {
+		case GPIO_INT_TRIG_LOW:
+			wch_exti_set_trigger(pin, WCH_EXTI_TRIGGER_FALLING_EDGE);
+			break;
+		case GPIO_INT_TRIG_HIGH:
+			wch_exti_set_trigger(pin, WCH_EXTI_TRIGGER_RISING_EDGE);
+			break;
+		default:
+			return -ENOTSUP;
+		}
+
+		wch_exti_enable(pin);
+
+		{
+			const struct gpio_ch32v00x_config *config = dev->config;
+			bool level = (config->regs->INDR & BIT(pin)) != 0;
+
+			if (level == (trigger == GPIO_INT_TRIG_HIGH)) {
+				wch_exti_sw_trigger(pin);
+			}
+		}
+		break;
 	default:
 		return -ENOTSUP;
 	}
