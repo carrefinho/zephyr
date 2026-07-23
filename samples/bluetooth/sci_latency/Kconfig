@@ -144,6 +144,20 @@ config SCI_LATENCY_STREAM_PERIOD_US
 	  central's offered/delivered percentages assume per-CE pacing and read
 	  low under an override; the ONEWAY latency lines are the signal.
 
+config SCI_LATENCY_STREAM_JITTER_US
+	int "Load-stream generator period jitter (+/- us)"
+	default 0
+	depends on SCI_LATENCY_STREAM_PERIOD_US > 0
+	help
+	  0: fixed generator period (SCI_LATENCY_STREAM_PERIOD_US exactly). N > 0:
+	  spread-spectrum pacing -- each inter-event delay is drawn uniformly from
+	  [PERIOD-N, PERIOD+N] us (xorshift PRNG), so the generator can never
+	  phase-lock to the connection-event grid (e.g. 1000 us on a 375 us link is
+	  exactly 8:3 commensurate and samples only three phases, which quantizes
+	  the one-way latency distribution into discrete atoms). Use N >= half the
+	  largest interval under test (e.g. 250 for 375/500 us links) for uniform
+	  phase coverage. The mean rate stays 1/PERIOD.
+
 config SCI_LATENCY_GPIO_ONEWAY
 	bool "GPIO cross-wire one-way latency (P1.11)"
 	select GPIO

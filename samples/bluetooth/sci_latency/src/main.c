@@ -1205,9 +1205,36 @@ BT_GATT_SERVICE_DEFINE(load_svc,
  */
 static K_SEM_DEFINE(stream_tick, 0, 8);
 
+#if CONFIG_SCI_LATENCY_STREAM_JITTER_US > 0
+/* Spread-spectrum pacing: draw each inter-event delay uniformly from
+ * PERIOD +/- JITTER so the generator cannot phase-lock to the CE grid (a
+ * fixed 1000 us period on a 375 us link is exactly 8:3 commensurate and
+ * samples only three phases). xorshift32, deterministic seed -- spectral
+ * spreading is what matters, not cryptographic quality.
+ */
+static uint32_t stream_prng = 0x2545F491U;
+
+static uint32_t stream_next_delay_us(void)
+{
+	uint32_t span = 2U * CONFIG_SCI_LATENCY_STREAM_JITTER_US + 1U;
+
+	stream_prng ^= stream_prng << 13;
+	stream_prng ^= stream_prng >> 17;
+	stream_prng ^= stream_prng << 5;
+
+	return (uint32_t)CONFIG_SCI_LATENCY_STREAM_PERIOD_US -
+	       CONFIG_SCI_LATENCY_STREAM_JITTER_US + (stream_prng % span);
+}
+#endif /* CONFIG_SCI_LATENCY_STREAM_JITTER_US > 0 */
+
 static void stream_timer_fn(struct k_timer *timer)
 {
+#if CONFIG_SCI_LATENCY_STREAM_JITTER_US > 0
+	/* One-shot re-arm with a fresh jittered delay (ISR context is fine). */
+	k_timer_start(timer, K_USEC(stream_next_delay_us()), K_NO_WAIT);
+#else
 	ARG_UNUSED(timer);
+#endif
 	k_sem_give(&stream_tick);
 }
 
@@ -1241,8 +1268,15 @@ static void stream_rearm(void)
 	/* K_USEC ceil-rounds to system ticks, so the generator runs at most ~1 tick
 	 * slow per period -- accounted for in the central's offered-load math.
 	 */
+#if CONFIG_SCI_LATENCY_STREAM_JITTER_US > 0
+	/* Spread-spectrum: one-shot start; the expiry re-arms with jitter. */
+	k_timer_start(&stream_timer, K_USEC(stream_next_delay_us()), K_NO_WAIT);
+	LOG_INF("Load stream armed at %u +/- %u us (spread-spectrum)", us,
+		CONFIG_SCI_LATENCY_STREAM_JITTER_US);
+#else
 	k_timer_start(&stream_timer, K_USEC(us), K_USEC(us));
 	LOG_INF("Load stream armed at %u us CE", us);
+#endif
 }
 
 static void load_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
