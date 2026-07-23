@@ -66,27 +66,6 @@ struct udc_wch_evt {
 
 K_MSGQ_DEFINE(drv_msgq, sizeof(struct udc_wch_evt), CONFIG_UDC_WCH_MAX_QMESSAGES, sizeof(uint32_t));
 
-static int usbd_ctrl_feed_dout(const struct device *dev, const size_t length)
-{
-	const struct udc_wch_config *config = dev->config;
-	USBOTG_FS_TypeDef *regs = config->regs;
-	struct udc_ep_config *cfg = udc_get_ep_cfg(dev, USB_CONTROL_EP_OUT);
-	struct net_buf *buf;
-
-	buf = udc_ctrl_alloc(dev, USB_CONTROL_EP_OUT, length);
-	if (buf == NULL) {
-		return -ENOMEM;
-	}
-
-	k_fifo_put(&cfg->fifo, buf);
-
-	regs->UEP0_DMA = (uint32_t)&buf->data;
-
-	regs->UEP0_RX_CTRL = USBFS_UEP_R_TOG | USBFS_UEP_R_RES_ACK;
-
-	return 0;
-}
-
 static void udc_wch_handle_setup(const struct device *dev)
 {
 	struct udc_wch_data *priv = udc_get_private(dev);
@@ -101,9 +80,7 @@ static void udc_wch_handle_setup(const struct device *dev)
 	cfg = udc_get_ep_cfg(dev, USB_CONTROL_EP_OUT);
 	cfg->stat.halted = false;
 
-	LOG_DBG("SETUP %02x %02x %02x %02x %02x %02x %02x %02x",
-		priv->setup[0], priv->setup[1], priv->setup[2], priv->setup[3],
-		priv->setup[4], priv->setup[5], priv->setup[6], priv->setup[7]);
+	LOG_HEXDUMP_DBG(priv->setup, 8, "SETUP");
 	udc_setup_received(dev, priv->setup);
 }
 
@@ -127,58 +104,75 @@ static void udc_wch_xfer_next(const struct device *dev, const uint8_t ep)
 
 			len = MIN(ep_cfg->mps, buf->len);
 
-			k_msleep(50); /* DIAG: widen the armed window for probing */
 			regs->UEP0_DMA = (uint32_t)buf->data;
 			regs->UEP0_TX_LEN = len;
 			regs->UEP0_TX_CTRL = USBFS_UEP_T_TOG | USBFS_UEP_T_RES_ACK;
 
 			buf->data += len;
 			buf->len -= len;
-		} else {
+		} else if (ep == USB_CONTROL_EP_OUT) {
+			struct udc_wch_data *priv = udc_get_private(dev);
+			struct udc_ep_config *in_cfg =
+				udc_get_ep_cfg(dev, USB_CONTROL_EP_IN);
+			struct udc_buf_info *bi = udc_get_buf_info(buf);
 
-			if (USB_EP_GET_DIR(ep) == USB_EP_DIR_IN) {
-				dma_reg = &regs->UEP0_DMA + USB_EP_GET_IDX(ep);
-				tx_len = &regs->UEP0_TX_LEN + 2 * USB_EP_GET_IDX(ep);
-				tx_ctrl = &regs->UEP0_TX_CTRL + 4 * USB_EP_GET_IDX(ep);
-
-				struct udc_ep_config *cfg = udc_get_ep_cfg(dev, ep);
-				len = MIN(cfg->mps, buf->len);
-
-				*dma_reg = (uint32_t)buf->data;
-				*tx_len = len;
-				*tx_ctrl =
-					(*tx_ctrl & ~USBOTG_UEP_T_RES_MASK) | USBOTG_UEP_T_RES_ACK;
-				buf->data += len;
-				buf->len -= len;
-			} else {
-				dma_reg = &regs->UEP0_DMA + USB_EP_GET_IDX(ep);
-				rx_ctrl = &regs->UEP0_RX_CTRL + 4 * USB_EP_GET_IDX(ep);
-
-				if (ep == USB_CONTROL_EP_OUT && udc_get_buf_info(buf)->setup) {
-					/* Receive SETUP packets into the private buffer.
-					 * UEP0_DMA is shared between RX and TX: don't
-					 * steal it while a control-IN transfer is pending.
-					 */
-					struct udc_wch_data *priv = udc_get_private(dev);
-					struct udc_ep_config *in_cfg =
-						udc_get_ep_cfg(dev, USB_CONTROL_EP_IN);
-
-					if (udc_buf_peek(in_cfg) == NULL) {
-						*dma_reg = (uint32_t)&priv->setup;
-						*rx_ctrl = (*rx_ctrl & ~USBOTG_UEP_R_RES_MASK) |
-							   USBOTG_UEP_R_RES_ACK;
-					}
-				} else {
-					*dma_reg = (uint32_t)buf->data;
-					*rx_ctrl = (*rx_ctrl & ~USBOTG_UEP_R_RES_MASK) |
-						   USBOTG_UEP_R_RES_ACK;
-				}
+			/* UEP0_DMA is shared between EP0 IN and OUT. While a
+			 * control IN transfer is armed, repointing it would
+			 * make the controller transmit the wrong data. Defer;
+			 * EP0 IN completion re-posts an event for this EP.
+			 * The host gets NAK on EP0 OUT meanwhile, which it
+			 * retries.
+			 */
+			if (udc_buf_peek(in_cfg) != NULL) {
+				return;
 			}
+
+			if (bi->setup) {
+				/* SETUP packets always land in the private
+				 * buffer; expected toggle is DATA0.
+				 */
+				regs->UEP0_DMA = (uint32_t)&priv->setup;
+				regs->UEP0_RX_CTRL = USBFS_UEP_R_RES_ACK;
+			} else if (bi->status) {
+				/* Status OUT is a ZLP: nothing is written to
+				 * memory, keep DMA on the setup buffer so a
+				 * SETUP arriving instead is not lost.
+				 * Status stage is always DATA1.
+				 */
+				regs->UEP0_DMA = (uint32_t)&priv->setup;
+				regs->UEP0_RX_CTRL = USBFS_UEP_R_TOG | USBFS_UEP_R_RES_ACK;
+			} else {
+				/* Data OUT stage, first packet is DATA1 (TOG
+				 * was set on SETUP reception).
+				 */
+				regs->UEP0_DMA = (uint32_t)buf->data;
+				regs->UEP0_RX_CTRL = (regs->UEP0_RX_CTRL &
+						      ~USBOTG_UEP_R_RES_MASK) |
+						     USBFS_UEP_R_RES_ACK;
+			}
+		} else if (USB_EP_GET_DIR(ep) == USB_EP_DIR_IN) {
+			dma_reg = &regs->UEP0_DMA + USB_EP_GET_IDX(ep);
+			tx_len = &regs->UEP0_TX_LEN + 2 * USB_EP_GET_IDX(ep);
+			tx_ctrl = &regs->UEP0_TX_CTRL + 4 * USB_EP_GET_IDX(ep);
+
+			struct udc_ep_config *cfg = udc_get_ep_cfg(dev, ep);
+			len = MIN(cfg->mps, buf->len);
+
+			*dma_reg = (uint32_t)buf->data;
+			*tx_len = len;
+			*tx_ctrl =
+				(*tx_ctrl & ~USBOTG_UEP_T_RES_MASK) | USBOTG_UEP_T_RES_ACK;
+			buf->data += len;
+			buf->len -= len;
+		} else {
+			dma_reg = &regs->UEP0_DMA + USB_EP_GET_IDX(ep);
+			rx_ctrl = &regs->UEP0_RX_CTRL + 4 * USB_EP_GET_IDX(ep);
+
+			*dma_reg = (uint32_t)buf->data;
+			*rx_ctrl = (*rx_ctrl & ~USBOTG_UEP_R_RES_MASK) |
+				   USBOTG_UEP_R_RES_ACK;
 		}
 	}
-
-	/* FIXME */
-	// k_busy_wait(1000);
 }
 
 static ALWAYS_INLINE void wch_thread_handler(void *const arg)
@@ -274,9 +268,23 @@ static int udc_wch_xfer_in(const struct device *dev)
 			regs->UEP0_DMA = (uint32_t)&priv->setup;
 		}
 
+		/* EP0 OUT arming (status stage or next SETUP) was deferred
+		 * while this IN transfer owned the shared DMA; process it now.
+		 */
+		if (udc_buf_peek(udc_get_ep_cfg(dev, USB_CONTROL_EP_OUT)) != NULL) {
+			struct udc_wch_evt evt = {
+				.type = UDC_WCH_EVT_XFER,
+				.ep = USB_CONTROL_EP_OUT,
+			};
+
+			k_msgq_put(&drv_msgq, &evt, K_NO_WAIT);
+		}
+
 		udc_submit_ep_event(dev, buf, 0);
 	} else {
 		tx_ctrl = &regs->UEP0_TX_CTRL + 4 * ep_idx;
+		tx_len = &regs->UEP0_TX_LEN + 2 * ep_idx;
+		dma_reg = &regs->UEP0_DMA + ep_idx;
 
 		*tx_ctrl ^= USBFS_UEP_T_TOG;
 
@@ -284,9 +292,6 @@ static int udc_wch_xfer_in(const struct device *dev)
 			struct udc_ep_config *cfg = udc_get_ep_cfg(dev, ep);
 
 			len = MIN(cfg->mps, buf->len);
-
-			dma_reg = &regs->UEP0_DMA + USB_EP_GET_IDX(ep);
-			tx_len = &regs->UEP0_TX_LEN + 2 * USB_EP_GET_IDX(ep);
 
 			*dma_reg = (uint32_t)buf->data;
 			*tx_len = len;
@@ -298,7 +303,6 @@ static int udc_wch_xfer_in(const struct device *dev)
 		}
 
 		if (udc_ep_buf_has_zlp(buf)) {
-			printf("ZLP !!!\n");
 			udc_ep_buf_clear_zlp(buf);
 			*tx_len = 0;
 			return 1;
@@ -386,6 +390,13 @@ static void udc_wch_isr_handler(const struct device *dev)
 
 		reset_status = regs->MIS_ST & USBOTG_UMS_BUS_RESET;
 		if (reset_status) {
+			/* The controller does not reset the device address in
+			 * hardware; the stack also clears it but only after a
+			 * thread hop, which can lose the first SETUP sent to
+			 * address 0 after the reset.
+			 */
+			regs->DEV_ADDR = regs->DEV_ADDR & USBFS_UDA_GP_BIT;
+
 			udc_submit_event(dev, UDC_EVT_RESET, 0);
 
 			udc_ep_disable_internal(dev, USB_CONTROL_EP_OUT);
