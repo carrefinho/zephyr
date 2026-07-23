@@ -994,18 +994,52 @@ static int run_ecv_load(void)
 	 * generator shortfall the controller never saw; interval-nominal stays in the
 	 * line as context.
 	 */
+#if defined(CONFIG_SCI_LATENCY_STREAM_JITTER_US) && \
+	(CONFIG_SCI_LATENCY_STREAM_JITTER_US > 0)
+	/* Spread-spectrum generator: every one-shot re-arm pays the tick ceil, so
+	 * the mean period is PERIOD + ~tick/2. Build the CENTRAL with the same
+	 * STREAM_PERIOD/JITTER values as the peripheral or this math is wrong.
+	 */
+	ARG_UNUSED(period_ticks);
+	offered = (uint32_t)(((uint64_t)elapsed_ms * MSEC_PER_SEC * 2U *
+			      CONFIG_SYS_CLOCK_TICKS_PER_SEC) /
+			     ((uint64_t)2U * CONFIG_SCI_LATENCY_STREAM_PERIOD_US *
+			      CONFIG_SYS_CLOCK_TICKS_PER_SEC + USEC_PER_SEC));
+#else
+#if CONFIG_SCI_LATENCY_STREAM_PERIOD_US > 0
+	/* Fixed-rate generator override: offered = the generator rate, not per-CE.
+	 * Build the CENTRAL with the same STREAM_PERIOD_US as the peripheral.
+	 */
+	period_ticks = ((uint64_t)CONFIG_SCI_LATENCY_STREAM_PERIOD_US *
+			CONFIG_SYS_CLOCK_TICKS_PER_SEC + (USEC_PER_SEC - 1)) /
+		       USEC_PER_SEC;
+#else
 	period_ticks = ((uint64_t)interval_us * CONFIG_SYS_CLOCK_TICKS_PER_SEC +
 			(USEC_PER_SEC - 1)) / USEC_PER_SEC;
+#endif
 	offered = (uint32_t)(((uint64_t)elapsed_ms * CONFIG_SYS_CLOCK_TICKS_PER_SEC) /
 			     (MSEC_PER_SEC * period_ticks));
+#endif /* CONFIG_SCI_LATENCY_STREAM_JITTER_US > 0 */
 	pct_off = offered ? ((delivered * 100U) / offered) : 0U;
 
+#if CONFIG_SCI_LATENCY_STREAM_PERIOD_US > 0
+	printk("RESULT: ECV_LOAD final: interval %u us, tIFS %u us (FSU %s), PHY 2M, "
+	       "load 8B-payload(17B-LL-PDU) @ %u us%s gen: delivered %u of offered %u "
+	       "(%u%%; %u%% of interval-nominal %u), seq gaps %u, CEs %u, link %s "
+	       "after %lld ms\n",
+	       interval_us, applied_tifs_us, use_fsu ? "on" : "off",
+	       CONFIG_SCI_LATENCY_STREAM_PERIOD_US,
+	       (CONFIG_SCI_LATENCY_STREAM_JITTER_US > 0) ? " spread-spectrum" : "",
+	       delivered, offered, pct_off, pct, expected, gaps, ce_events,
+	       survived ? "up" : "DROPPED", elapsed_ms);
+#else
 	printk("RESULT: ECV_LOAD final: interval %u us, tIFS %u us (FSU %s), PHY 2M, "
 	       "load 1x8B-payload(17B-LL-PDU)/CE: delivered %u of offered %u (%u%%; "
 	       "%u%% of interval-nominal %u), seq gaps %u, CEs %u, link %s after %lld ms\n",
 	       interval_us, applied_tifs_us, use_fsu ? "on" : "off", delivered, offered,
 	       pct_off, pct, expected, gaps, ce_events, survived ? "up" : "DROPPED",
 	       elapsed_ms);
+#endif
 #if defined(CONFIG_SCI_LATENCY_GPIO_ONEWAY)
 	if (ow_n > 0U) {
 		printk("RESULT: ONEWAY latency (generation edge -> notify callback) "
@@ -1205,7 +1239,8 @@ BT_GATT_SERVICE_DEFINE(load_svc,
  */
 static K_SEM_DEFINE(stream_tick, 0, 8);
 
-#if CONFIG_SCI_LATENCY_STREAM_JITTER_US > 0
+#if defined(CONFIG_SCI_LATENCY_STREAM_JITTER_US) && \
+	(CONFIG_SCI_LATENCY_STREAM_JITTER_US > 0)
 /* Spread-spectrum pacing: draw each inter-event delay uniformly from
  * PERIOD +/- JITTER so the generator cannot phase-lock to the CE grid (a
  * fixed 1000 us period on a 375 us link is exactly 8:3 commensurate and
@@ -1229,7 +1264,8 @@ static uint32_t stream_next_delay_us(void)
 
 static void stream_timer_fn(struct k_timer *timer)
 {
-#if CONFIG_SCI_LATENCY_STREAM_JITTER_US > 0
+#if defined(CONFIG_SCI_LATENCY_STREAM_JITTER_US) && \
+	(CONFIG_SCI_LATENCY_STREAM_JITTER_US > 0)
 	/* One-shot re-arm with a fresh jittered delay (ISR context is fine). */
 	k_timer_start(timer, K_USEC(stream_next_delay_us()), K_NO_WAIT);
 #else
@@ -1268,7 +1304,8 @@ static void stream_rearm(void)
 	/* K_USEC ceil-rounds to system ticks, so the generator runs at most ~1 tick
 	 * slow per period -- accounted for in the central's offered-load math.
 	 */
-#if CONFIG_SCI_LATENCY_STREAM_JITTER_US > 0
+#if defined(CONFIG_SCI_LATENCY_STREAM_JITTER_US) && \
+	(CONFIG_SCI_LATENCY_STREAM_JITTER_US > 0)
 	/* Spread-spectrum: one-shot start; the expiry re-arms with jitter. */
 	k_timer_start(&stream_timer, K_USEC(stream_next_delay_us()), K_NO_WAIT);
 	LOG_INF("Load stream armed at %u +/- %u us (spread-spectrum)", us,
