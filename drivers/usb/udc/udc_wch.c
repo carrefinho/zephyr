@@ -100,11 +100,25 @@ static void udc_wch_xfer_next(const struct device *dev, const uint8_t ep)
 
 	if (buf != NULL) {
 		if (ep == USB_CONTROL_EP_IN) {
+			struct udc_wch_data *priv = udc_get_private(dev);
+
 			ep_cfg = udc_get_ep_cfg(dev, USB_CONTROL_EP_IN);
 
 			len = MIN(ep_cfg->mps, buf->len);
 
-			regs->UEP0_DMA = (uint32_t)buf->data;
+			/* Status-stage ZLP buffers are allocated with length 0
+			 * and have no data pointer. Never arm the shared EP0
+			 * DMA with it: a SETUP arriving in the completion
+			 * window is always accepted by the controller and
+			 * would be written to 0x20000000 + UEP0_DMA. Park the
+			 * DMA on the setup buffer instead so such a SETUP
+			 * lands where it belongs.
+			 */
+			if (len > 0) {
+				regs->UEP0_DMA = (uint32_t)buf->data;
+			} else {
+				regs->UEP0_DMA = (uint32_t)&priv->setup;
+			}
 			regs->UEP0_TX_LEN = len;
 			regs->UEP0_TX_CTRL = USBFS_UEP_T_TOG | USBFS_UEP_T_RES_ACK;
 
@@ -158,10 +172,13 @@ static void udc_wch_xfer_next(const struct device *dev, const uint8_t ep)
 			struct udc_ep_config *cfg = udc_get_ep_cfg(dev, ep);
 			len = MIN(cfg->mps, buf->len);
 
-			*dma_reg = (uint32_t)buf->data;
+			if (len > 0) {
+				*dma_reg = (uint32_t)buf->data;
+			}
 			*tx_len = len;
 			*tx_ctrl =
 				(*tx_ctrl & ~USBOTG_UEP_T_RES_MASK) | USBOTG_UEP_T_RES_ACK;
+			LOG_DBG("arm ep%02x len %d tx_ctrl %02x", ep, len, *tx_ctrl);
 			buf->data += len;
 			buf->len -= len;
 		} else {
@@ -251,7 +268,13 @@ static int udc_wch_xfer_in(const struct device *dev)
 		}
 
 		if (udc_ep_buf_has_zlp(buf)) {
+			struct udc_wch_data *priv = udc_get_private(dev);
+
 			udc_ep_buf_clear_zlp(buf);
+			/* ZLP reads no memory: park the shared DMA back on the
+			 * setup buffer (see udc_wch_xfer_next).
+			 */
+			regs->UEP0_DMA = (uint32_t)&priv->setup;
 			regs->UEP0_TX_LEN = 0;
 			return 1;
 		}
@@ -285,6 +308,14 @@ static int udc_wch_xfer_in(const struct device *dev)
 		tx_ctrl = &regs->UEP0_TX_CTRL + 4 * ep_idx;
 		tx_len = &regs->UEP0_TX_LEN + 2 * ep_idx;
 		dma_reg = &regs->UEP0_DMA + ep_idx;
+
+		LOG_DBG("IN ep%02x done tx_ctrl %02x", ep, *tx_ctrl);
+
+		if (unlikely(buf == NULL)) {
+			/* Spurious completion: don't touch the data toggle */
+			LOG_WRN("ep 0x%02x IN completion with empty queue", ep);
+			return 0;
+		}
 
 		*tx_ctrl ^= USBFS_UEP_T_TOG;
 
