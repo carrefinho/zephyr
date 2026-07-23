@@ -101,6 +101,9 @@ static void udc_wch_handle_setup(const struct device *dev)
 	cfg = udc_get_ep_cfg(dev, USB_CONTROL_EP_OUT);
 	cfg->stat.halted = false;
 
+	LOG_DBG("SETUP %02x %02x %02x %02x %02x %02x %02x %02x",
+		priv->setup[0], priv->setup[1], priv->setup[2], priv->setup[3],
+		priv->setup[4], priv->setup[5], priv->setup[6], priv->setup[7]);
 	udc_setup_received(dev, priv->setup);
 }
 
@@ -124,6 +127,7 @@ static void udc_wch_xfer_next(const struct device *dev, const uint8_t ep)
 
 			len = MIN(ep_cfg->mps, buf->len);
 
+			k_msleep(50); /* DIAG: widen the armed window for probing */
 			regs->UEP0_DMA = (uint32_t)buf->data;
 			regs->UEP0_TX_LEN = len;
 			regs->UEP0_TX_CTRL = USBFS_UEP_T_TOG | USBFS_UEP_T_RES_ACK;
@@ -151,15 +155,24 @@ static void udc_wch_xfer_next(const struct device *dev, const uint8_t ep)
 				rx_ctrl = &regs->UEP0_RX_CTRL + 4 * USB_EP_GET_IDX(ep);
 
 				if (ep == USB_CONTROL_EP_OUT && udc_get_buf_info(buf)->setup) {
-					/* Receive SETUP packets into the private buffer */
+					/* Receive SETUP packets into the private buffer.
+					 * UEP0_DMA is shared between RX and TX: don't
+					 * steal it while a control-IN transfer is pending.
+					 */
 					struct udc_wch_data *priv = udc_get_private(dev);
+					struct udc_ep_config *in_cfg =
+						udc_get_ep_cfg(dev, USB_CONTROL_EP_IN);
 
-					*dma_reg = (uint32_t)&priv->setup;
+					if (udc_buf_peek(in_cfg) == NULL) {
+						*dma_reg = (uint32_t)&priv->setup;
+						*rx_ctrl = (*rx_ctrl & ~USBOTG_UEP_R_RES_MASK) |
+							   USBOTG_UEP_R_RES_ACK;
+					}
 				} else {
 					*dma_reg = (uint32_t)buf->data;
+					*rx_ctrl = (*rx_ctrl & ~USBOTG_UEP_R_RES_MASK) |
+						   USBOTG_UEP_R_RES_ACK;
 				}
-				*rx_ctrl =
-					(*rx_ctrl & ~USBOTG_UEP_R_RES_MASK) | USBOTG_UEP_R_RES_ACK;
 			}
 		}
 	}
@@ -216,6 +229,9 @@ static int udc_wch_xfer_in(const struct device *dev)
 
 	buf = udc_buf_peek(ep_cfg);
 
+	LOG_DBG("IN ep%02x buf %p len %d txlen %d", ep, buf, buf ? buf->len : -1,
+		(int)regs->UEP0_TX_LEN);
+
 	if (ep == USB_CONTROL_EP_IN) {
 
 		regs->UEP0_TX_CTRL ^= USBFS_UEP_T_TOG;
@@ -250,6 +266,13 @@ static int udc_wch_xfer_in(const struct device *dev)
 
 		regs->UEP0_TX_CTRL = (regs->UEP0_TX_CTRL & ~USBOTG_UEP_T_RES_MASK) |
 				     USBOTG_UEP_T_RES_NAK;
+
+		/* Give the shared EP0 DMA back to SETUP reception */
+		{
+			struct udc_wch_data *priv = udc_get_private(dev);
+
+			regs->UEP0_DMA = (uint32_t)&priv->setup;
+		}
 
 		udc_submit_ep_event(dev, buf, 0);
 	} else {
@@ -304,6 +327,7 @@ static void udc_wch_xfer_out(const struct device *dev)
 	int len;
 
 	buf = udc_buf_get(ep_cfg);
+	LOG_DBG("OUT ep%02x buf %p rxlen %d", ep, buf, (int)regs->RX_LEN);
 	if (buf == NULL) {
 		udc_submit_event(dev, UDC_EVT_ERROR, -ENOBUFS);
 		return;
