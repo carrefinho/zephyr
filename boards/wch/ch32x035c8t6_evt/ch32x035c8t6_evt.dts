@@ -58,3 +58,8 @@
 };
 
 zephyr_udc0: &usbfs {};
+
+/* GPIO interrupts (EXTI) -- matches what ch32v003evt does. */
+&exti {
+	status = "okay";
+};
