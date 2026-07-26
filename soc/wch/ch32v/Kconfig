@@ -4,6 +4,15 @@
 
 config SOC_FAMILY_CH32V
 	select RISCV
+	# The QingKe PFIC sets a per-IRQ active flag on interrupt entry that only
+	# an mret clears, and while it is set no same-priority interrupt (i.e.,
+	# with all priorities at reset, *any* interrupt) is dispatched. Zephyr's
+	# z_riscv_switch fast path leaves a rescheduling trap via plain ret, so a
+	# switch from ISR context abandons the trap and wedges interrupt delivery
+	# until the interrupted thread happens to run again -- or forever, if it
+	# never does. Route every switch through ecall so each trap entry is
+	# balanced by exactly one mret, as the CLIC targets already do.
+	select RISCV_ALWAYS_SWITCH_THROUGH_ECALL if MULTITHREADING
 	select BUILD_OUTPUT_HEX
 	select CH32V00X_SYSTICK
 	select HAS_PM
