@@ -574,7 +574,11 @@ static bool set_endpoint(const struct usb_ep_descriptor *ep_desc)
 		reset_endpoint(ep_desc);
 		/* allow any canceled transfers to terminate */
 		if (!k_is_in_isr()) {
-			k_usleep(150);
+			/* k_sleep() with a constant timeout keeps the microsecond
+			 * conversion at compile time; k_usleep() converts at run time
+			 * and drags in 64-bit division (~900 B on 32-bit targets).
+			 */
+			k_sleep(K_USEC(150));
 		}
 	}
 
