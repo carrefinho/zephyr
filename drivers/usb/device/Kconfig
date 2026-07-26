@@ -227,6 +227,8 @@ config USB_DC_NUMAKER_MSG_HANDLER_THREAD_STACK_SIZE
 
 endif # USB_DC_NUMAKER
 
+rsource "Kconfig.wch"
+
 config USB_NATIVE_POSIX
 	bool "Native Posix USB Device Controller Driver"
 	depends on ARCH_POSIX && EXTERNAL_LIBC
