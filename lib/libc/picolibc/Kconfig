@@ -36,6 +36,15 @@ choice PICOLIBC_IO_LEVEL
 	help
 	  Selects the level of printf and scanf support
 
+config PICOLIBC_EXIT_PRINTS
+	bool "Print a message from _exit()"
+	help
+	  Have picolibc's default _exit() print "exit" before spinning. The
+	  printf() call folds to puts() and drags stdout, the FILE machinery
+	  and tinystdio's vfprintf into every image -- about 2 KB -- even
+	  when nothing is listening. Leave this off on flash-constrained
+	  targets.
+
 config PICOLIBC_IO_FLOAT
 	bool "full support for integer/floating point values in printf/scanf"
 	help

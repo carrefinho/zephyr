@@ -8,7 +8,9 @@
 
 __weak void _exit(int status)
 {
+#ifdef CONFIG_PICOLIBC_EXIT_PRINTS
 	printf("exit\n");
+#endif
 	while (1) {
 		Z_SPIN_DELAY(100);
 	}
