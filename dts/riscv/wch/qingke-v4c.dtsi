@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024 Michael Hope
+ * Copyright (c) 2025 MASSDRIVER EI (massdriver.space)
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -8,15 +8,25 @@
 	#address-cells = <1>;
 	#size-cells = <1>;
 
+	power-states {
+		run0: run0 {
+			compatible = "zephyr,power-state";
+			power-state-name = "runtime-idle";
+			substate-id = <1>;
+		};
+	};
+
 	cpus {
 		#address-cells = <1>;
 		#size-cells = <0>;
 
 		cpu0: cpu@0 {
 			device_type = "cpu";
-			compatible = "wch,qingke-v2";
+			compatible = "wch,qingke-v4c", "riscv";
 			reg = <0>;
-			riscv,isa = "rv32ec_zicsr_zifencei";
+			riscv,isa-base = "rv32i";
+			riscv,isa-extensions = "i", "m", "a", "c", "zicsr", "zifencei";
+			cpu-power-states = <&run0>;
 		};
 	};
 

@@ -5,3 +5,26 @@ config CLOCK_CONTROL_WCH_RCC
 	bool "WCH CH32V00x Reset and Clock Control (RCC) driver"
 	default y
 	depends on DT_HAS_WCH_RCC_ENABLED
+
+config CLOCK_CONTROL_WCH_RCC_SINGLE_SOURCE
+	bool
+	default y if SOC_CH32X035
+	depends on CLOCK_CONTROL_WCH_RCC
+	help
+	  Selected on SoCs with exactly one system clock source (no HSE, no
+	  PLL), where RCC_CFGR0 has no SW/SWS select field and RCC_CTLR has no
+	  clock-security enable. On the CH32X035 CFGR0 holds only MCO and HPRE
+	  (RM V1.9 §3.4.2), so there is no source to select and nothing for the
+	  CSS to monitor.
+
+config CLOCK_CONTROL_WCH_RCC_NO_LSI_CONTROL
+	bool
+	default y if SOC_CH32X035
+	depends on CLOCK_CONTROL_WCH_RCC
+	help
+	  Selected on SoCs whose RCC_RSTSCKR has no LSION/LSIRDY bits, i.e. the
+	  LSI has no software enable and is always available (it only feeds the
+	  IWDG/AWU). On the CH32X035 that whole register's low half-word is
+	  reserved (RM V1.9 §3.4.8) and the vendor StdPeriph tree has no LSI
+	  enable function at all, so enabling and then spin-waiting for a ready
+	  bit that never sets hangs the boot.

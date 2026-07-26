@@ -6,7 +6,18 @@ config SOC_FAMILY_CH32V
 	select RISCV
 	select BUILD_OUTPUT_HEX
 	select CH32V00X_SYSTICK
-	select ATOMIC_OPERATIONS_C
+	select HAS_PM
+	select ARCH_HAS_CUSTOM_CPU_IDLE
+	select ARCH_HAS_CUSTOM_CPU_ATOMIC_IDLE
+	select HAS_SEGGER_RTT if ZEPHYR_SEGGER_MODULE
+	# The RISC-V linker already honours CONFIG_FLASH_LOAD_OFFSET/_SIZE;
+	# advertising it here is what makes USE_DT_CODE_PARTITION selectable.
+	# Needed on CH32V20x/30x, where only the marketed "zero-wait" low
+	# region is safe to execute from -- the rest of the die is reachable
+	# but is served from the external flash die, so an image must be
+	# confined to a code partition rather than allowed to span all of
+	# flash0.
+	select HAS_FLASH_LOAD_OFFSET
 	imply XIP
 
 if SOC_FAMILY_CH32V

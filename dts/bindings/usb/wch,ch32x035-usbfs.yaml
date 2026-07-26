@@ -1,0 +1,37 @@
+# Copyright (c) 2026 The ZMK Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  WCH CH32X035 USBFS device controller (lineage-A register block).
+
+  Distinct from "wch,usbfs" (the V20x/V30x USBHD/USBOTG_FS controller): the
+  X035 has a device-only register map at 0x40023400, no UEP4 DMA register, a
+  packed UEPn_CTRL_H handshake word and its USB PHY analog controls live in
+  AFIO->CTLR rather than the endpoint block. It therefore uses a dedicated
+  driver (udc_wch_x03x.c) and this dedicated compatible.
+
+  Two clocks are required and must be listed in order: the USBFS AHB gate
+  first, then the AFIO gate (the driver writes AFIO->CTLR to enable the PHY).
+
+compatible: "wch,ch32x035-usbfs"
+
+include: usb-ep.yaml
+
+properties:
+  reg:
+    required: true
+
+  interrupts:
+    required: true
+
+  clocks:
+    required: true
+    description: |
+      USBFS gate (AHB) as clocks[0], AFIO gate (APB2) as clocks[1].
+
+  wch,vdd-5v:
+    type: boolean
+    description: |
+      Set when the part runs from a 5V VDD. Selects the 10K D+ pull-up and
+      disables the internal 3.3V PHY LDO. When unset (default, 3.3V VDD) the
+      internal PHY LDO is enabled and a 1.5K D+ pull-up is used.
