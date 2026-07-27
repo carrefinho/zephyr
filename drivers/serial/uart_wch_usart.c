@@ -20,6 +20,7 @@ struct usart_wch_config {
 	uint32_t current_speed;
 	uint8_t parity;
 	uint8_t clock_id;
+	bool single_wire;
 	const struct pinctrl_dev_config *pin_cfg;
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 	void (*irq_config_func)(const struct device *dev);
@@ -65,7 +66,12 @@ static int usart_wch_init(const struct device *dev)
 	regs->BRR = divn;
 	regs->CTLR1 = ctlr1;
 	regs->CTLR2 = 0;
-	regs->CTLR3 = 0;
+	/*
+	 * In single-wire half-duplex mode the transmitter drives the shared line
+	 * and the receiver is fed from it internally, so only the TX pin is
+	 * pinmuxed (open-drain) and RX is left alone.
+	 */
+	regs->CTLR3 = config->single_wire ? USART_CTLR3_HDSEL : 0;
 
 	err = pinctrl_apply_state(config->pin_cfg, PINCTRL_STATE_DEFAULT);
 	if (err != 0) {
@@ -333,6 +339,7 @@ static DEVICE_API(uart, usart_wch_driver_api) = {
 		.clock_dev = DEVICE_DT_GET(DT_INST_CLOCKS_CTLR(idx)),                              \
 		.clock_id = DT_INST_CLOCKS_CELL(idx, id),                                          \
 		.pin_cfg = PINCTRL_DT_INST_DEV_CONFIG_GET(idx),                                    \
+		.single_wire = DT_INST_PROP(idx, single_wire),                                     \
 		USART_WCH_IRQ_HANDLER_FUNC(idx)};                                                  \
 	DEVICE_DT_INST_DEFINE(idx, &usart_wch_init, NULL, &usart_wch_##idx##_data,                 \
 			      &usart_wch_##idx##_config, PRE_KERNEL_1,                             \

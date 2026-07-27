@@ -7,3 +7,11 @@ include: [uart-controller.yaml, pinctrl-device.yaml]
 properties:
   reg:
     required: true
+
+  single-wire:
+    type: boolean
+    description: |
+      Enable single-wire half-duplex communication. TX and RX are connected
+      internally and only the TX pin is used afterwards, so only it should be
+      configured in pinctrl -- as an open-drain output, since the line is
+      shared. RX/TX conflicts must be handled on the user side.
