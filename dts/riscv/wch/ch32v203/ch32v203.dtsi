@@ -186,6 +186,30 @@
 		};
 
 		/*
+		 * TIM3, a general-purpose timer with four channels. TIM1 is an
+		 * advanced timer whose outputs need BDTR.MOE, which
+		 * pwm_wch_gptm never writes, so it is not modelled here.
+		 */
+		timer3: counter@40000400 {
+			compatible = "wch,gptm";
+			reg = <0x40000400 16>;
+			prescaler = <1>;
+			channels = <4>;
+			clocks = <&rcc CH32V20X_V30X_CLOCK_TIM3>;
+			interrupt-parent = <&pfic>;
+			interrupts = <45>;
+			interrupt-names = "global";
+			status = "disabled";
+
+			pwm3: pwm {
+				compatible = "wch,gptm-pwm";
+				pwm-controller;
+				#pwm-cells = <3>;
+				status = "disabled";
+			};
+		};
+
+		/*
 		 * DMA1. Seven channels are declared, matching the V303: the
 		 * V20x does have an eighth, but its vector number is
 		 * variant-dependent (61/62 on the D6, 66/67 on the D8) and
