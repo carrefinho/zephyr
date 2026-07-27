@@ -274,7 +274,27 @@ static int wch_i2c_configure_timing(I2C_TypeDef *regs, uint32_t clock_rate,
 	uint16_t freq_range = (uint16_t)(clock_rate / 1000000);
 	uint16_t clock_config;
 
-#ifndef CONFIG_SOC_CH32V003
+	/*
+	 * FREQ is a 6-bit field holding the module clock in MHz, and the
+	 * reference manual restricts it to 4-60 MHz. Anything else has to be
+	 * rejected rather than truncated into the field: a 144 MHz part would
+	 * otherwise write 0x90, landing 16 MHz in FREQ plus a reserved bit, and
+	 * mis-time the bus with no indication that anything was wrong. Note the
+	 * RCC driver never divides APB down from HCLK, so this is the core clock.
+	 */
+	if (freq_range < 4 || freq_range > 60) {
+		LOG_ERR("I2C module clock %u Hz is outside the supported 4-60 MHz range",
+			clock_rate);
+		return -ERANGE;
+	}
+
+/*
+ * Only the V20x/V30x I2C block has the rise-time register; the CH32V003 and the
+ * X03x drop it (and the SMBus support that goes with it). Key off the HAL's own
+ * bit definition rather than a list of SoCs, so a new part gets this right by
+ * construction.
+ */
+#ifdef I2C_RTR_TRISE
 	uint16_t trise;
 
 	switch (speed) {

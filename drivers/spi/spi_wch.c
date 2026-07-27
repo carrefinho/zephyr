@@ -19,8 +19,11 @@ LOG_MODULE_REGISTER(spi_wch);
 
 #include <hal_ch32fun.h>
 
+/* The X03x HAL header defines this itself; the others leave it to the driver. */
+#ifndef SPI_CTLR1_LSBFIRST
 #define SPI_CTLR1_LSBFIRST BIT(7)
-#define SPI_CTLR1_BR_POS   3
+#endif
+#define SPI_CTLR1_BR_POS 3
 
 struct spi_wch_config {
 	SPI_TypeDef *regs;
