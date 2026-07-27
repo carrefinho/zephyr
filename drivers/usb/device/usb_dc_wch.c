@@ -137,12 +137,71 @@ typedef USBOTG_FS_TypeDef wch_usb_regs_t;
 #define WCH_UIS_ENDP_MASK   0x0FU
 
 /*
- * Vendor-header naming drift between the two families. ch32v30xhw.h spells the
- * UDEV_CTRL bits USBFS_UD_*; ch32x03xhw.h only has the RB_UD_* forms. (The
- * INT_FG flag bits differ the same way -- USBFS_UIF_* vs RB_UIF_* -- but
- * USBFS_UIE_* exists in both headers with identical values, 0x01/0x02/0x04,
- * and INT_FG and INT_EN share a bit layout, so this driver uses the UIE names
- * for both registers and needs no shim there.)
+ * Vendor-header naming drift, part one: ch32v20xhw.h spells every bit of this
+ * register block USBOTG_*, and has no USBFS_* names at all. ch32v30xhw.h
+ * happens to define BOTH spellings -- its USBFS_* set belongs to the separate
+ * standalone FS device, but the values agree with USBOTG_* for every field
+ * this driver touches (checked across all 39) -- which is the only reason the
+ * USBFS_* spelling below ever compiled for lineage B. On the V203 it does not.
+ *
+ * Mapped rather than renamed at the ~57 use sites so the V30x and X035 builds
+ * stay byte-identical: both already define these, so the #ifndef makes the
+ * whole block inert there and only the V20x picks it up.
+ */
+#ifndef USBFS_UEP_T_RES_MASK
+/* USB_CTRL */
+#define USBFS_UC_CLR_ALL     USBOTG_UC_CLR_ALL
+#define USBFS_UC_RESET_SIE   USBOTG_UC_RESET_SIE
+#define USBFS_UC_DEV_PU_EN   USBOTG_UC_DEV_PU_EN
+#define USBFS_UC_DMA_EN      USBOTG_UC_DMA_EN
+#define USBFS_UC_INT_BUSY    USBOTG_UC_INT_BUSY
+/* UDEV_CTRL / MIS_ST */
+#define USBFS_UD_PD_DIS      USBOTG_UD_PD_DIS
+#define USBFS_UD_PORT_EN     USBOTG_UD_PORT_EN
+#define USBFS_UMS_SUSPEND    USBOTG_UMS_SUSPEND
+/* INT_EN / INT_FG (shared bit layout) */
+#define USBFS_UIE_BUS_RST    USBOTG_UIE_BUS_RST
+#define USBFS_UIE_TRANSFER   USBOTG_UIE_TRANSFER
+#define USBFS_UIE_SUSPEND    USBOTG_UIE_SUSPEND
+/* UEPn_TX_CTRL / UEPn_RX_CTRL */
+#define USBFS_UEP_T_RES_MASK  USBOTG_UEP_T_RES_MASK
+#define USBFS_UEP_T_RES_ACK   USBOTG_UEP_T_RES_ACK
+#define USBFS_UEP_T_RES_NAK   USBOTG_UEP_T_RES_NAK
+#define USBFS_UEP_T_RES_NONE  USBOTG_UEP_T_RES_NONE
+#define USBFS_UEP_T_RES_STALL USBOTG_UEP_T_RES_STALL
+#define USBFS_UEP_T_TOG       USBOTG_UEP_T_TOG
+#define USBFS_UEP_T_AUTO_TOG  USBOTG_UEP_T_AUTO_TOG
+#define USBFS_UEP_R_RES_MASK  USBOTG_UEP_R_RES_MASK
+#define USBFS_UEP_R_RES_ACK   USBOTG_UEP_R_RES_ACK
+#define USBFS_UEP_R_RES_NAK   USBOTG_UEP_R_RES_NAK
+#define USBFS_UEP_R_RES_NONE  USBOTG_UEP_R_RES_NONE
+#define USBFS_UEP_R_RES_STALL USBOTG_UEP_R_RES_STALL
+#define USBFS_UEP_R_TOG       USBOTG_UEP_R_TOG
+#define USBFS_UEP_R_AUTO_TOG  USBOTG_UEP_R_AUTO_TOG
+/* UEP4_1_MOD / UEP2_3_MOD / UEP5_6_MOD / UEP7_MOD */
+#define USBFS_UEP1_TX_EN USBOTG_UEP1_TX_EN
+#define USBFS_UEP1_RX_EN USBOTG_UEP1_RX_EN
+#define USBFS_UEP2_TX_EN USBOTG_UEP2_TX_EN
+#define USBFS_UEP2_RX_EN USBOTG_UEP2_RX_EN
+#define USBFS_UEP3_TX_EN USBOTG_UEP3_TX_EN
+#define USBFS_UEP3_RX_EN USBOTG_UEP3_RX_EN
+#define USBFS_UEP4_TX_EN USBOTG_UEP4_TX_EN
+#define USBFS_UEP4_RX_EN USBOTG_UEP4_RX_EN
+#define USBFS_UEP5_TX_EN USBOTG_UEP5_TX_EN
+#define USBFS_UEP5_RX_EN USBOTG_UEP5_RX_EN
+#define USBFS_UEP6_TX_EN USBOTG_UEP6_TX_EN
+#define USBFS_UEP6_RX_EN USBOTG_UEP6_RX_EN
+#define USBFS_UEP7_TX_EN USBOTG_UEP7_TX_EN
+#define USBFS_UEP7_RX_EN USBOTG_UEP7_RX_EN
+#endif
+
+/*
+ * Part two: ch32v30xhw.h spells the UDEV_CTRL bits USBFS_UD_*; ch32x03xhw.h
+ * only has the RB_UD_* forms. (The INT_FG flag bits differ the same way --
+ * USBFS_UIF_* vs RB_UIF_* -- but USBFS_UIE_* exists in both headers with
+ * identical values, 0x01/0x02/0x04, and INT_FG and INT_EN share a bit layout,
+ * so this driver uses the UIE names for both registers and needs no shim
+ * there.)
  */
 #ifndef USBFS_UD_PD_DIS
 #define USBFS_UD_PD_DIS  RB_UD_PD_DIS
