@@ -10,16 +10,18 @@
  * One flash family is ever enabled per build. Select the active controller
  * compatible so the single-instance DT_INST_* accessors below bind to it.
  * (devicetree.h must be included first so DT_HAS_COMPAT_STATUS_OKAY resolves.)
- * The CH32X03x (X035) FPEC register block, fast-erase/fast-program sequence
- * and geometry are identical to the V20x/30x: the fast page is 256 bytes
- * (the vendor SDK's FLASH_ROM_WRITE loops 64 *words*, adr += 256, with
- * 256-byte address/length alignment on both parts), so nothing below is
- * page-size dependent.
+ * The CH32X03x (X035) FPEC register block and geometry match the V20x/30x --
+ * the fast page is 256 bytes on both (the vendor SDK's FLASH_ROM_WRITE loops
+ * 64 *words*, adr += 256, with 256-byte address/length alignment), so nothing
+ * below is page-size dependent -- but the fast-program buffer is loaded by a
+ * different sequence on each. See FLASH_WCH_CTLR_BUF_LOAD below.
  */
 #if DT_HAS_COMPAT_STATUS_OKAY(wch_ch32x03x_flash_controller)
 #define DT_DRV_COMPAT wch_ch32x03x_flash_controller
+#define FLASH_WCH_X03X 1
 #else
 #define DT_DRV_COMPAT wch_ch32v20x_30x_flash_controller
+#define FLASH_WCH_X03X 0
 #endif
 
 #include <zephyr/kernel.h>
@@ -62,15 +64,37 @@ LOG_MODULE_REGISTER(flash_wch, CONFIG_FLASH_LOG_LEVEL);
 /* Fast-mode CTLR bits (not all are in the ch32fun v20x headers) */
 #define FLASH_WCH_CTLR_PAGE_PG BIT(16)
 #define FLASH_WCH_CTLR_PAGE_ER BIT(17)
-#define FLASH_WCH_CTLR_PG_STRT BIT(21)
 #define FLASH_WCH_CTLR_FLOCK   BIT(15)
-/* Bit 22. On the X03x this is BUFRST, which resets the flash read buffer.
- * On the V20x/30x the same bit is RSENACT (RM 32.4, write-only, self-
- * clearing): the actuator that completes an exit from enhanced read mode.
- * Both uses want it set after an operation, so one define serves.
+
+/* The two families load the fast-program buffer differently, and the bits do
+ * not line up. Hardware-verified on a CH32X035C8T6: driving the V20x/30x
+ * sequence on an X03x programs nothing at all -- the page keeps its previous
+ * contents, STATR reports no error, and only the driver's own read-back
+ * catches it.
+ *
+ *   V20x/30x: writing a word to the page address loads the buffer implicitly;
+ *             the program is started with PG_STRT (bit 21) and the address
+ *             comes from those writes, so FLASH->ADDR is not used.
+ *   X03x:     the buffer must be reset with BUF_RST (bit 19) and each word
+ *             explicitly committed with BUF_LOAD (bit 18); the program is
+ *             then started the same way an erase is, with FLASH->ADDR plus
+ *             the ordinary STRT (bit 6). PG_STRT does not exist.
+ *
+ * Both match their vendor SDK's FLASH_ROM_WRITE()/FLASH_ProgramPage_Fast().
  */
-#define FLASH_WCH_CTLR_BUFRST  BIT(22)
-#define FLASH_WCH_CTLR_RSENACT FLASH_WCH_CTLR_BUFRST
+#if FLASH_WCH_X03X
+#define FLASH_WCH_CTLR_BUF_LOAD BIT(18)
+#define FLASH_WCH_CTLR_BUF_RST  BIT(19)
+#else
+#define FLASH_WCH_CTLR_PG_STRT BIT(21)
+#endif
+
+/* On the V20x/30x bit 22 is RSENACT (RM 32.4, write-only, self-clearing): the
+ * actuator that completes an exit from enhanced read mode. The X03x has no
+ * such bit -- its read buffer is reset by BUF_RST above, which is part of the
+ * program sequence rather than something to poke on lock.
+ */
+#define FLASH_WCH_CTLR_RSENACT BIT(22)
 /* Read acceleration, V20x/30x only (the X03x RM lists both as reserved).
  * ENHANCE_MOD is enhanced read mode; SCKMOD selects the flash access clock
  * (0 = SYSCLK/2, 1 = SYSCLK) and is the SCKMOD referred to in
@@ -98,8 +122,15 @@ LOG_MODULE_REGISTER(flash_wch, CONFIG_FLASH_LOG_LEVEL);
 #define FLASH_WCH_CTLR_ACCEL (FLASH_WCH_CTLR_ENHANCE)
 #endif
 
-/* STATR write-1-to-clear flags */
+/* STATR write-1-to-clear flags. WR_BSY (the fast-program buffer is accepting
+ * a word) is V20x/30x only; on the X03x bit 1 is reserved and BUF_LOAD's own
+ * BSY covers the same wait.
+ */
+#if FLASH_WCH_X03X
+#define FLASH_WCH_STATR_WR_BSY 0U
+#else
 #define FLASH_WCH_STATR_WR_BSY BIT(1)
+#endif
 #define FLASH_WCH_STATR_ERR    (FLASH_STATR_PGERR | FLASH_STATR_WRPRTERR)
 
 #define FLASH_WCH_ERASE_TIMEOUT_MS 500
@@ -193,12 +224,13 @@ static void flash_wch_lock(void)
 {
 	/* Bit 22 is RSENACT on the V20x/30x -- the actuator that completes an
 	 * exit from enhanced read mode. Setting it here would tear down the
-	 * mode we just enabled, so only poke it when acceleration is off (where
-	 * it is the X03x's BUFRST, and matches the vendor disable path). The
-	 * accel disable path sets it itself, in the documented order.
+	 * mode we just enabled, so only poke it when acceleration is off, which
+	 * matches the vendor disable path; the accel disable path sets it itself,
+	 * in the documented order. The bit is reserved on the X03x, whose read
+	 * buffer is reset by BUF_RST inside the program sequence instead.
 	 */
-	if (!IS_ENABLED(CONFIG_SOC_FLASH_WCH_READ_ACCELERATION)) {
-		FLASH->CTLR |= FLASH_WCH_CTLR_BUFRST;
+	if (!FLASH_WCH_X03X && !IS_ENABLED(CONFIG_SOC_FLASH_WCH_READ_ACCELERATION)) {
+		FLASH->CTLR |= FLASH_WCH_CTLR_RSENACT;
 	}
 	FLASH->CTLR |= FLASH_WCH_CTLR_FLOCK;
 	FLASH->CTLR |= FLASH_CTLR_LOCK;
@@ -295,16 +327,30 @@ static void flash_wch_page_update(uint32_t page_addr, const uint32_t *buf)
 	FLASH->CTLR &= ~FLASH_WCH_CTLR_PAGE_ER;
 
 	FLASH->CTLR |= FLASH_WCH_CTLR_PAGE_PG;
+#if FLASH_WCH_X03X
+	FLASH->CTLR |= FLASH_WCH_CTLR_BUF_RST;
+#endif
 	while (FLASH->STATR & (FLASH_STATR_BSY | FLASH_WCH_STATR_WR_BSY)) {
 	}
 
 	for (size_t i = 0; i < FLASH_WCH_PAGE_WORDS; i++) {
 		dst[i] = buf[i];
+#if FLASH_WCH_X03X
+		FLASH->CTLR |= FLASH_WCH_CTLR_BUF_LOAD;
+		while (FLASH->STATR & FLASH_STATR_BSY) {
+		}
+#else
 		while (FLASH->STATR & FLASH_WCH_STATR_WR_BSY) {
 		}
+#endif
 	}
 
+#if FLASH_WCH_X03X
+	FLASH->ADDR = page_addr;
+	FLASH->CTLR |= FLASH_CTLR_STRT;
+#else
 	FLASH->CTLR |= FLASH_WCH_CTLR_PG_STRT;
+#endif
 	while (FLASH->STATR & FLASH_STATR_BSY) {
 	}
 	FLASH->CTLR &= ~FLASH_WCH_CTLR_PAGE_PG;
