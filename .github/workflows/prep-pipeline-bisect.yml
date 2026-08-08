@@ -95,7 +95,8 @@ jobs:
           test_rev() {
             local rev="$1"
             git checkout -q "${rev}" -- subsys/bluetooth/controller
-            if ! (app=tests/bsim/bluetooth/ll/prep_pipeline conf_file=prj_35.conf compile \
+            if ! (app=tests/bsim/bluetooth/ll/prep_pipeline conf_file=prj_35.conf \
+                  conf_overlay=overlay_bisect.conf compile \
                   && wait_for_background_jobs) >> build.log 2>&1; then
               git checkout -q HEAD -- subsys/bluetooth/controller
               rm -rf bsim_out
@@ -103,7 +104,7 @@ jobs:
               return
             fi
             local out
-            out="$(BIN_SUFFIX=prj_35_conf SEEDS='1 2' BURSTS_US='400' \
+            out="$(BIN_SUFFIX=prj_35_conf_overlay_bisect_conf SEEDS='1 2' BURSTS_US='400' \
                    PERIODS_US='3300' SIM_US=30e6 \
                    tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh || true)"
             git checkout -q HEAD -- subsys/bluetooth/controller
