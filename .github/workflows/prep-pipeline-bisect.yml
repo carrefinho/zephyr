@@ -1,16 +1,15 @@
-# Binary-search the v3.5.0..v4.1.0 controller history for the commit that
-# introduced the zmk#3370 prepare-pipeline overflow.
+# Binary-search v3.7.0..v4.0.0 for the commit that introduced the zmk#3370
+# prepare-pipeline overflow (LL_ASSERT(next) @ lll.c).
 #
-# Methodology: whole-tree bisect across this range is infeasible in one west
-# workspace (module pins, HWMv2 board rework). Instead each candidate commit's
-# `subsys/bluetooth/controller` subtree is transplanted into the 4.1 build tree
-# and the reproducing cell (stock depth-7, burst=400us period=3300us) is run.
-# Endpoints are validated first: the v3.5.0 subtree must be GOOD (no overflow)
-# and the v4.1.0 subtree BAD (overflows), else the transplant methodology is
-# broken and the job aborts. Build failures mark a commit UNTESTABLE and probe
-# linear neighbors.
-#
-# Manual dispatch only - run after the A/B arms, when no known patch holds.
+# Bracketing (discriminating version ladder, overhead assert disabled):
+#   v3.5.0 HELD (even extreme bursts) / v3.6.0 HELD / v3.7.0 HELD /
+#   v4.0.0 OVERFLOWS [next] / v4.1.0 OVERFLOWS [next]
+# so the regression entered between v3.7.0 and v4.0.0 - a range entirely after
+# the HCI-devicetree rework, which lets the controller-subtree transplant work:
+# each candidate commit's `subsys/bluetooth/controller` is checked out into a
+# v4.0.0 build tree and the reproducing cell (stock depth-7, burst=400us
+# period=3300us) is run. Endpoints validated before searching; build failures
+# mark commits UNTESTABLE and probe linear neighbors.
 name: Prep-Pipeline Regression Bisect
 
 on:
@@ -33,55 +32,61 @@ jobs:
       BSIM_OUT_PATH: /opt/bsim/
       BSIM_COMPONENTS_PATH: /opt/bsim/components
       BOARD: nrf52_bsim
+      BOARD_TS: nrf52_bsim
+      GOOD_TAG: v3.7.0
+      BAD_TAG: v4.0.0
     steps:
       - name: Apply container owner mismatch workaround
         run: git config --global --add safe.directory '*'
 
-      - name: Checkout
+      - name: Checkout (test sources)
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Resolve west topdir
-        run: echo "WEST_TOPDIR=$(realpath "$GITHUB_WORKSPACE/..")" >> "$GITHUB_ENV"
+      - name: Resolve bisect west topdir
+        run: echo "LTOP=$(realpath "$GITHUB_WORKSPACE/..")/ladder-${BAD_TAG}" >> "$GITHUB_ENV"
 
-      - name: Cache west modules
+      - name: Cache bisect west modules (shared with the ladder's v4.0.0 rung)
         uses: actions/cache@v5
-        env:
-          cache-name: cache-zephyr-modules
         with:
           path: |
-            ${{ env.WEST_TOPDIR }}/modules
-            ${{ env.WEST_TOPDIR }}/tools
-            ${{ env.WEST_TOPDIR }}/bootloader
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('west.yml') }}
-          restore-keys: |
-            ${{ runner.os }}-build-${{ env.cache-name }}-
-            ${{ runner.os }}-build-
+            ${{ env.LTOP }}/modules
+            ${{ env.LTOP }}/tools
+          key: ${{ runner.os }}-ladder-modules-v4.0.0
         timeout-minutes: 5
         continue-on-error: true
 
-      - name: West init + update
+      - name: Clone ${{ env.BAD_TAG }} (blob-filtered full history) + west update
+        shell: bash
         run: |
-          west init -l . || true
+          mkdir -p "${LTOP}" && cd "${LTOP}"
+          rm -rf zephyr
+          git clone --filter=blob:none --branch "${BAD_TAG}" \
+            https://github.com/zephyrproject-rtos/zephyr.git zephyr
+          cd zephyr
+          git fetch --filter=blob:none origin tag "${GOOD_TAG}"
+          git rev-list --reverse "${GOOD_TAG}".."${BAD_TAG}" -- subsys/bluetooth/controller > revs.txt
+          echo "controller commits in range: $(wc -l < revs.txt)"
+          cd "${LTOP}"
+          west init -l zephyr || true
           west config manifest.group-filter -- +ci,+optional
           west config --global update.narrow true
           west update 1> west.update.log 2>&1
-          west forall -c 'git reset --hard HEAD'
-          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
 
-      - name: Fetch upstream range (partial clone)
+      - name: Port test into the ${{ env.BAD_TAG }} tree
         shell: bash
         run: |
-          git remote add up https://github.com/zephyrproject-rtos/zephyr.git || true
-          git fetch --filter=blob:none up tag v3.5.0 tag v4.1.0
-          git rev-list --reverse v3.5.0..v4.1.0 -- subsys/bluetooth/controller > revs.txt
-          echo "controller commits in range: $(wc -l < revs.txt)"
+          cd "${LTOP}/zephyr"
+          cp -r "${GITHUB_WORKSPACE}/tests/bsim/bluetooth/ll/prep_pipeline" \
+            tests/bsim/bluetooth/ll/
+          echo "ZEPHYR_SDK_INSTALL_DIR=$(ls -d /opt/toolchains/zephyr-sdk-* | sort -V | tail -1)" >> "$GITHUB_ENV"
 
       - name: Bisect by controller-subtree transplant
         shell: bash
         run: |
+          cd "${LTOP}/zephyr"
           export ZEPHYR_BASE="${PWD}"
           source tests/bsim/compile.source
 
@@ -90,7 +95,7 @@ jobs:
           test_rev() {
             local rev="$1"
             git checkout -q "${rev}" -- subsys/bluetooth/controller
-            if ! (app=tests/bsim/bluetooth/ll/prep_pipeline compile \
+            if ! (app=tests/bsim/bluetooth/ll/prep_pipeline conf_file=prj_35.conf compile \
                   && wait_for_background_jobs) >> build.log 2>&1; then
               git checkout -q HEAD -- subsys/bluetooth/controller
               rm -rf bsim_out
@@ -98,7 +103,7 @@ jobs:
               return
             fi
             local out
-            out="$(BIN_SUFFIX=prj_conf SEEDS='1 2' BURSTS_US='400' \
+            out="$(BIN_SUFFIX=prj_35_conf SEEDS='1 2' BURSTS_US='400' \
                    PERIODS_US='3300' SIM_US=30e6 \
                    tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh || true)"
             git checkout -q HEAD -- subsys/bluetooth/controller
@@ -108,20 +113,19 @@ jobs:
           mapfile -t revs < revs.txt
           n=${#revs[@]}
           echo "=== endpoint validation ==="
-          v35=$(test_rev v3.5.0)
-          echo "v3.5.0 subtree: ${v35}"
-          v41=$(test_rev v4.1.0)
-          echo "v4.1.0 subtree: ${v41}"
-          if [ "${v35}" != "GOOD" ] || [ "${v41}" != "BAD" ]; then
-            echo "ENDPOINTS INVALID (v3.5.0=${v35}, v4.1.0=${v41}) - transplant methodology broken, aborting"
+          v_good=$(test_rev "${GOOD_TAG}")
+          echo "${GOOD_TAG} subtree: ${v_good}"
+          v_bad=$(test_rev "${BAD_TAG}")
+          echo "${BAD_TAG} subtree: ${v_bad}"
+          if [ "${v_good}" != "GOOD" ] || [ "${v_bad}" != "BAD" ]; then
+            echo "ENDPOINTS INVALID (${GOOD_TAG}=${v_good}, ${BAD_TAG}=${v_bad}) - transplant methodology broken, aborting"
             exit 1
           fi
 
-          lo=0; hi=$((n - 1))   # invariant: revs[<lo] GOOD side, revs[>hi] BAD side
+          lo=0; hi=$((n - 1))
           first_bad=""
           while [ ${lo} -le ${hi} ]; do
             mid=$(( (lo + hi) / 2 ))
-            # probe outward from mid past UNTESTABLE commits
             idx=-1
             for off in 0 1 -1 2 -2 3 -3 4 -4 5 -5; do
               t=$(( mid + off ))
@@ -158,6 +162,6 @@ jobs:
         with:
           name: prep-pipeline-bisect-logs
           path: |
-            build.log
-            revs.txt
+            ${{ env.LTOP }}/zephyr/build.log
+            ${{ env.LTOP }}/zephyr/revs.txt
           if-no-files-found: ignore
