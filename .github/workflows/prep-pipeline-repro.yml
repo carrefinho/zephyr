@@ -226,6 +226,48 @@ jobs:
           fi
           git reset --hard HEAD -q
 
+      - name: "A/B arm 4: revert 2b30259e9f0 (the 3.5->4.1 re-applied dequeue walk)"
+        shell: bash
+        run: |
+          # The provenance analysis: v3.5.0 shipped WITHOUT the param-only
+          # normal-event traversal in ull_prepare_dequeue (0d54ca87616
+          # introduced it, 91781306e95 reverted it pre-3.5, 2b30259e9f0
+          # re-applied it for 4.x). v3.5 holds the 400us band; v4.1 dies.
+          # This arm removes exactly that delta from v4.1 - if it holds where
+          # every other arm fails, 2b30259 is the regression.
+          export ZEPHYR_BASE="${PWD}"
+          git fetch --depth=2 https://github.com/zephyrproject-rtos/zephyr.git \
+            2b30259e9f043a0d6683a75b378cfd6c23211b05
+          git -c user.name=ci -c user.email=ci@local \
+            revert -n --no-edit 2b30259e9f043a0d6683a75b378cfd6c23211b05
+          rm -rf bsim_out
+          source tests/bsim/compile.source
+          app=tests/bsim/bluetooth/ll/prep_pipeline conf_overlay=overlay_accel.conf compile
+          app=tests/bsim/bluetooth/ll/prep_pipeline compile
+          wait_for_background_jobs
+          export SEEDS="1 2"
+          export BURSTS_US="300 400 1500 6000"
+          export PERIODS_US="3300 5700"
+          export SIM_US=30e6
+          set +e
+          tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh \
+            | tee sweep_rev2b30259.log
+          BIN_SUFFIX=prj_conf SEEDS="1 2 3 4" BURSTS_US="400" SIM_US=60e6 \
+            tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh \
+            | tee sweep_rev2b30259_d7.log
+          set -e
+          if grep -q 'SWEEP: reproduced' sweep_rev2b30259.log; then
+            echo "ARM RESULT: 2b30259 REVERT STILL OVERFLOWS (accel matrix)"
+          else
+            echo "ARM RESULT: 2b30259 REVERT HELD the accel matrix"
+          fi
+          if grep -q 'SWEEP: reproduced' sweep_rev2b30259_d7.log; then
+            echo "ARM RESULT: 2b30259 REVERT STILL OVERFLOWS (depth-7 400us soak)"
+          else
+            echo "ARM RESULT: 2b30259 REVERT HELD the depth-7 400us soak"
+          fi
+          git reset --hard HEAD -q
+
       - name: Summary
         if: always()
         shell: bash
@@ -235,6 +277,8 @@ jobs:
           echo "=== fix2 ===";    grep -E 'SWEEP:' sweep_fix2.log            || true
           echo "=== revert ===";  grep -E 'SWEEP:' sweep_revert.log          || true
           echo "=== fullset ==="; grep -E 'SWEEP:' sweep_fullset.log         || true
+          echo "=== rev2b30259 accel ==="; grep -E 'SWEEP:' sweep_rev2b30259.log || true
+          echo "=== rev2b30259 depth7 ==="; grep -E 'SWEEP:' sweep_rev2b30259_d7.log || true
 
       - name: Upload logs
         if: always()
