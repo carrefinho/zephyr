@@ -73,12 +73,13 @@ jobs:
           west forall -c 'git reset --hard HEAD'
           echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
 
-      - name: "Compile prep_pipeline bsim app (accelerated: EVENT_PIPELINE_MAX=3)"
+      - name: "Compile prep_pipeline bsim app (accel EVENT_PIPELINE_MAX=3 + stock depth-7)"
         shell: bash
         run: |
           export ZEPHYR_BASE="${PWD}"
           source tests/bsim/compile.source
           app=tests/bsim/bluetooth/ll/prep_pipeline conf_overlay=overlay_accel.conf compile
+          app=tests/bsim/bluetooth/ll/prep_pipeline compile
           wait_for_background_jobs
 
       - name: Sweep CPU-latency matrix until the prepare pipeline overflows
@@ -104,6 +105,25 @@ jobs:
           export SEED="${REPRO_SEED}" LAT_BURST_US="${REPRO_BURST}" LAT_PERIOD_US="${REPRO_PERIOD}"
           export SIM_US=30e6
           tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_inspect.sh
+
+      - name: "Depth-7 control: stock EVENT_PIPELINE_MAX, no accelerator"
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export BIN_SUFFIX=prj_conf
+          export SEEDS="1 2"
+          export BURSTS_US="400 1500 6000"
+          export PERIODS_US="3300 5700"
+          export SIM_US=60e6
+          set +e
+          tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh \
+            | tee sweep_depth7.log
+          set -e
+          if grep -q 'SWEEP: reproduced' sweep_depth7.log; then
+            echo "CONTROL RESULT: DEPTH-7 STOCK PIPELINE ALSO OVERFLOWS (accel not load-bearing)"
+          else
+            echo "CONTROL RESULT: depth-7 did not overflow in this matrix/sim length"
+          fi
 
       - name: "A/B arm 1: cherry-pick 93b951d6fb3 + 0d1b4d2ba6b (the 2-commit fix)"
         shell: bash
@@ -162,13 +182,57 @@ jobs:
           fi
           git reset --hard HEAD -q
 
+      - name: "A/B arm 3: FULL forward-fix set (selective branch + the omitted 0d1b4d2)"
+        shell: bash
+        run: |
+          # Pete's selective branch (comments + radio-IRQ + observer-fix + quick
+          # check) crashed Seth's overnight soak - but it OMITTED 0d1b4d2. This
+          # arm applies all five in the selective branch's order plus 0d1b4d2,
+          # answering: would the complete forward-fix set have held?
+          export ZEPHYR_BASE="${PWD}"
+          git fetch --depth=2 https://github.com/zephyrproject-rtos/zephyr.git \
+            d737e285e57bae84057160a5ee94b7c566b9705e \
+            93b951d6fb31fc499a0594dd4433fb9136944c4c \
+            0d1b4d2ba6b5f46e7b76b49500ddd3d8dde28f2d
+          git fetch --depth=2 https://github.com/petejohanson/zephyr.git \
+            aee74037119b3747068d1c50c35de6e73cb4ddb7 \
+            fec5aa21abe5395fe64f700307b98c320a520b5e
+          for c in d737e285e57bae84057160a5ee94b7c566b9705e \
+                   aee74037119b3747068d1c50c35de6e73cb4ddb7 \
+                   93b951d6fb31fc499a0594dd4433fb9136944c4c \
+                   fec5aa21abe5395fe64f700307b98c320a520b5e \
+                   0d1b4d2ba6b5f46e7b76b49500ddd3d8dde28f2d; do
+            git -c user.name=ci -c user.email=ci@local cherry-pick -n "$c" \
+              || { echo "ARM RESULT: FULL SET cherry-pick CONFLICT at $c"; exit 0; }
+          done
+          rm -rf bsim_out
+          source tests/bsim/compile.source
+          app=tests/bsim/bluetooth/ll/prep_pipeline conf_overlay=overlay_accel.conf compile
+          wait_for_background_jobs
+          export SEEDS="1 2"
+          export BURSTS_US="400 1500 6000"
+          export PERIODS_US="3300 5700"
+          export SIM_US=30e6
+          set +e
+          tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh \
+            | tee sweep_fullset.log
+          set -e
+          if grep -q 'SWEEP: reproduced' sweep_fullset.log; then
+            echo "ARM RESULT: FULL FORWARD-FIX SET STILL OVERFLOWS"
+          else
+            echo "ARM RESULT: FULL FORWARD-FIX SET HELD (no overflow across the matrix)"
+          fi
+          git reset --hard HEAD -q
+
       - name: Summary
         if: always()
         shell: bash
         run: |
-          echo "=== base ===";   grep -E 'RESULT:|SWEEP:' sweep_base.log   || true
-          echo "=== fix2 ===";   grep -E 'SWEEP:' sweep_fix2.log           || true
-          echo "=== revert ==="; grep -E 'SWEEP:' sweep_revert.log         || true
+          echo "=== base ===";    grep -E 'RESULT:|SWEEP:' sweep_base.log    || true
+          echo "=== depth7 ===";  grep -E 'SWEEP:' sweep_depth7.log          || true
+          echo "=== fix2 ===";    grep -E 'SWEEP:' sweep_fix2.log            || true
+          echo "=== revert ===";  grep -E 'SWEEP:' sweep_revert.log          || true
+          echo "=== fullset ==="; grep -E 'SWEEP:' sweep_fullset.log         || true
 
       - name: Upload logs
         if: always()
