@@ -15,6 +15,11 @@ name: Prep-Pipeline Regression Bisect
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - "bsim-prep-pipeline-repro"
+    paths:
+      - ".github/workflows/prep-pipeline-bisect.yml"
 
 jobs:
   bisect:
