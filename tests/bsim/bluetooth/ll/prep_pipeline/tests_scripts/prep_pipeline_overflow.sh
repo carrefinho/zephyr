@@ -56,10 +56,19 @@ cd "${BSIM_OUT_PATH}/bin"
 
 wait
 
-if grep -qiE 'ASSERTION FAIL' "${sid}"_*.log 2>/dev/null; then
+# Discriminate the asserts: the zmk#3370 field crash is specifically
+# LL_ASSERT(next) in lll.c (prepare-pipeline enqueue overflow). Other
+# controller asserts (e.g. the EVENT_OVERHEAD_START family in
+# lll_central.c/lll_peripheral.c, the zmk#3331 sibling) are a DIFFERENT
+# failure and must not count as this repro.
+if grep -qE 'ASSERTION FAIL \[next\] @ .*lll\.c' "${sid}"_*.log 2>/dev/null; then
   echo "----- assert context (DUT) -----"
   grep -iE 'ASSERTION FAIL|lll\.c|\[next\]' "${sid}_dut.log" | head -5
   echo "RESULT: PREP_PIPELINE_OVERFLOW_REPRODUCED (seed=${seed} burst=${lat_burst} period=${lat_period})"
+elif grep -qiE 'ASSERTION FAIL' "${sid}"_*.log 2>/dev/null; then
+  echo "----- other assert (DUT) -----"
+  grep -iE 'ASSERTION FAIL' "${sid}"_*.log | head -3
+  echo "RESULT: OTHER_ASSERT (seed=${seed} burst=${lat_burst} period=${lat_period})"
 else
   echo "RESULT: NO_OVERFLOW (seed=${seed} burst=${lat_burst} period=${lat_period})"
 fi
