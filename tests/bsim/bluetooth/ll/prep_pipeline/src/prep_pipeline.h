@@ -22,6 +22,13 @@
 #ifndef PREP_PIPELINE_H_
 #define PREP_PIPELINE_H_
 
+/* Zephyr 3.5 (the v3.5.0 control build) predates BT_LE_ADV_CONN_FAST_1. All
+ * users include <zephyr/bluetooth/bluetooth.h> before this header.
+ */
+#ifndef BT_LE_ADV_CONN_FAST_1
+#define BT_LE_ADV_CONN_FAST_1 BT_LE_ADV_CONN
+#endif
+
 /* Real parameters read straight out of the zmk#3370 coredump (lll_conn structs):
  *   host link  (DUT=peripheral, to the computer): 15 ms, latency 30
  *   split link (DUT=central, to the peripheral):  7.5 ms, latency 30

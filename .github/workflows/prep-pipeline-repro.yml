@@ -244,3 +244,104 @@ jobs:
             sweep_*.log
             west.update.log
           if-no-files-found: ignore
+
+  # Negative control: the identical test + latency matrix on ZMK's actual
+  # shipped Zephyr 3.5 tree (v3.5.0+zmk-fixes). ZMK centrals were stable on
+  # 3.5 in the field, and the buggy ull_prepare_dequeue param-only walk was
+  # reverted OUT of v3.5.0 and re-applied for 4.x (2b30259e9f0). If 3.5 holds
+  # where 4.1 overflows, the harness discriminates and the regression window
+  # is confirmed under identical load. If 3.5 ALSO overflows, the injected
+  # latency is overloading any controller and the accel depth is suspect.
+  control-v35:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    continue-on-error: true
+    container:
+      image: docker.io/zephyrprojectrtos/ci:v0.27.4
+      options: "--entrypoint /bin/bash"
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+      BSIM_OUT_PATH: /opt/bsim/
+      BSIM_COMPONENTS_PATH: /opt/bsim/components
+      BOARD: nrf52_bsim
+      BOARD_TS: nrf52_bsim
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout (test sources)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve 3.5 west topdir
+        run: echo "Z35=$(realpath "$GITHUB_WORKSPACE/..")/z35" >> "$GITHUB_ENV"
+
+      - name: Cache 3.5 west modules
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ env.Z35 }}/modules
+            ${{ env.Z35 }}/tools
+          key: ${{ runner.os }}-z35-modules-v3.5.0-zmk-fixes
+        timeout-minutes: 5
+        continue-on-error: true
+
+      - name: Clone ZMK Zephyr 3.5 + west update
+        shell: bash
+        run: |
+          mkdir -p "${Z35}" && cd "${Z35}"
+          [ -d zephyr ] || git clone --depth 1 --branch v3.5.0+zmk-fixes \
+            https://github.com/zmkfirmware/zephyr.git zephyr
+          west init -l zephyr || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update 1> west35.update.log 2>&1
+
+      - name: Port test into the 3.5 tree + compile
+        shell: bash
+        run: |
+          cd "${Z35}/zephyr"
+          cp -r "${GITHUB_WORKSPACE}/tests/bsim/bluetooth/ll/prep_pipeline" \
+            tests/bsim/bluetooth/ll/
+          # 3.5's lll.h hard-defines EVENT_PIPELINE_MAX; add the same #ifndef
+          # guard the 4.1 branch carries so the accel overlay can shrink it.
+          sed -i 's/^#define EVENT_PIPELINE_MAX 7$/#ifndef EVENT_PIPELINE_MAX\n#define EVENT_PIPELINE_MAX 7\n#endif/' \
+            subsys/bluetooth/controller/ll_sw/lll.h
+          grep -n -B1 -A2 'define EVENT_PIPELINE_MAX' subsys/bluetooth/controller/ll_sw/lll.h
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+          app=tests/bsim/bluetooth/ll/prep_pipeline conf_file=prj_35.conf \
+            conf_overlay=overlay_accel.conf compile
+          wait_for_background_jobs
+
+      - name: "Sweep the same latency matrix on 3.5 (expect NO overflow)"
+        shell: bash
+        run: |
+          cd "${Z35}/zephyr"
+          export ZEPHYR_BASE="${PWD}"
+          export BIN_SUFFIX=prj_35_conf_overlay_accel_conf
+          export SEEDS="1 2"
+          export BURSTS_US="400 1500 6000"
+          export PERIODS_US="3300 5700"
+          export SIM_US=30e6
+          set +e
+          tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh \
+            | tee sweep_v35.log
+          set -e
+          if grep -q 'SWEEP: reproduced' sweep_v35.log; then
+            echo "CONTROL RESULT: v3.5.0+zmk-fixes ALSO OVERFLOWS - harness overloads any controller, rethink"
+          else
+            echo "CONTROL RESULT: v3.5.0+zmk-fixes HELD - 3.5->4.1 regression confirmed under identical load"
+          fi
+
+      - name: Upload 3.5 logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prep-pipeline-v35-logs
+          path: |
+            /opt/bsim/bin/prep_pipe_*.log
+            ${{ env.Z35 }}/zephyr/sweep_v35.log
+          if-no-files-found: ignore
