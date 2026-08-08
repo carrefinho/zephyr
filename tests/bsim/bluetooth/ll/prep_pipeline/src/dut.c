@@ -16,6 +16,7 @@
  */
 #include <zephyr/kernel.h>
 #include <string.h>
+#include <stdio.h>
 #include <errno.h>
 
 #include "bs_types.h"
@@ -50,6 +51,51 @@ extern enum bst_result_t bst_result;
 static struct bt_conn *split_conn;  /* DUT is CENTRAL on this link */
 static struct bt_conn *host_conn;   /* DUT is PERIPHERAL on this link */
 static volatile bool scanning;
+
+/* ---- CPU-latency injector ------------------------------------------------
+ *
+ * bsim executes all CPU work in ZERO simulated time, so the ULL/ISR latency a
+ * real ZMK central experiences (kernel spinlock critical sections, SPI display
+ * + kscan ISRs, and internal-flash writes/erases that stall the whole CPU for
+ * 41 us .. 85 ms on nRF52) never occurs, and the controller's prepares are
+ * always enqueued, preempted, and dequeued exactly on time. The June sweeps
+ * varied only link GEOMETRY (intervals/drift/phase) and never overflowed.
+ *
+ * This thread periodically masks interrupts and burns simulated time, delaying
+ * the radio/ticker ISRs the way real critical sections and flash stalls do:
+ *   lat_burst  = irq-locked busy-wait length in us (0 = injector disabled)
+ *   lat_period = sleep between bursts in us
+ * Passed per-run via bsim test args: -argstest lat_burst=N lat_period=N
+ */
+static uint32_t lat_burst_us;
+static uint32_t lat_period_us = 3300;
+
+static K_THREAD_STACK_DEFINE(lat_stack, 1024);
+static struct k_thread lat_thread;
+
+static void lat_injector(void *p1, void *p2, void *p3)
+{
+	while (true) {
+		k_usleep(lat_period_us);
+
+		unsigned int key = irq_lock();
+
+		k_busy_wait(lat_burst_us);
+		irq_unlock(key);
+	}
+}
+
+static void test_args_parse(int argc, char *argv[])
+{
+	for (int i = 0; i < argc; i++) {
+		if (sscanf(argv[i], "lat_burst=%u", &lat_burst_us) == 1) {
+			continue;
+		}
+		if (sscanf(argv[i], "lat_period=%u", &lat_period_us) == 1) {
+			continue;
+		}
+	}
+}
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -186,6 +232,18 @@ static void dut_main(void)
 
 	printk("DUT blasting split link; host drives the peripheral link\n");
 
+	/* Both links are up and discovered: start the CPU-latency injector so
+	 * connection setup runs clean and only steady-state traffic sees the
+	 * delayed ISRs.
+	 */
+	if (lat_burst_us > 0) {
+		k_thread_create(&lat_thread, lat_stack, K_THREAD_STACK_SIZEOF(lat_stack),
+				lat_injector, NULL, NULL, NULL,
+				K_PRIO_PREEMPT(0), 0, K_NO_WAIT);
+		printk("DUT latency injector: %u us irq-locked burst every %u us\n",
+		       lat_burst_us, lat_period_us);
+	}
+
 	/* Saturate the central link forever. The host saturates the peripheral
 	 * link from its side. Both DUT events run long and overlap at 7.5 ms.
 	 */
@@ -217,6 +275,7 @@ static const struct bst_test_instance dut_tests[] = {
 		.test_id = "dut",
 		.test_descr = "Dual-role DUT (peripheral to host + central to split); "
 			      "drives both 7.5 ms links to overlap.",
+		.test_args_f = test_args_parse,
 		.test_pre_init_f = dut_init,
 		.test_tick_f = dut_tick,
 		.test_main_f = dut_main,

@@ -56,6 +56,12 @@ SEEDS="$(seq 1 16)" SIM_US=30e6 \
   overlay (and raise `SIM_US`) for a faithful depth-7 soak.
 - **`SEED` / `SEEDS`** vary how the two anchors land; sweep to find an overflow,
   then that single seed is deterministic.
+- **`LAT_BURST_US` / `LAT_PERIOD_US`** drive the DUT's CPU-latency injector
+  (`-argstest lat_burst= lat_period=`): every period it irq-locks and busy-burns
+  the burst, delaying the radio/ticker ISRs the way real spinlock sections, ISR
+  load, and nRF52 flash stalls do. bsim otherwise charges ZERO CPU time — the
+  June 2026 geometry-only sweeps (intervals/drift/phase) never overflowed, so
+  injected latency is the repro's load-bearing dimension. `0` disables.
 - **`SIM_US`** sim length. **Buffer counts** in `prj.conf` set per-event airtime.
 
 ## Confirm it's the bug, and inspect deterministically

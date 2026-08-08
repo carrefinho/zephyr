@@ -2,34 +2,46 @@
 # Copyright 2026 The ZMK Contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# Sweep random seeds until the prepare-pipeline overflow reproduces. Each seed
-# changes how the two links' anchors land relative to each other, so a sweep
-# finds an overlap pattern that overflows; once found it is deterministic
-# (re-run that single seed under gdb to inspect mfifo_fifo_prep).
+# Sweep the CPU-latency-injection matrix (burst x period) x seeds until the
+# prepare-pipeline overflow reproduces. The June 2026 geometry-only sweeps
+# (intervals/drift/phase, no injected latency) never overflowed - bsim charges
+# zero CPU time, so the ULL/ISR latency real hardware has was missing entirely.
+# The injector (see dut.c) irq-locks and burns simulated time periodically:
+#   bursts span kernel-spinlock scale (~100 us), ISR/storm scale (~400-1500 us),
+#   and internal-flash-stall scale (~6000 us; nRF52 page erase stalls the CPU
+#   for tens of ms). Periods are chosen off-grid from the 7.5/8.75 ms intervals
+#   so the bursts precess through every connection-event phase.
 #
-# Env:  SEEDS (default "1..12"),  SIM_US (default 30e6)
-# Exit: 0 and prints "SWEEP: reproduced at seed N" on first overflow;
-#       1 if no seed overflowed (try more seeds / longer SIM_US / smaller
-#       EVENT_PIPELINE_MAX / more saturation).
+# Once a cell reproduces it is deterministic: re-run that single (seed, burst,
+# period) via prep_pipeline_overflow.sh under gdb to inspect mfifo_fifo_prep.
+#
+# Env:  SEEDS (default "1 2"), BURSTS_US (default "100 400 1500 6000"),
+#       PERIODS_US (default "3300 5700"), SIM_US (default 30e6)
+# Exit: 0 and prints "SWEEP: reproduced ..." on first overflow; 1 if no cell
+#       overflowed.
 
 source "${ZEPHYR_BASE}/tests/bsim/sh_common.source"
 
-# Coprime intervals beat the events through collision continuously (~every
-# 52 ms), so a repro no longer depends on luck or a long soak; a few seeds
-# (varying the initial phase) over a short sim suffice.
-seeds="${SEEDS:-1 2 3 4 5}"
+seeds="${SEEDS:-1 2}"
+bursts="${BURSTS_US:-100 400 1500 6000}"
+periods="${PERIODS_US:-3300 5700}"
 export SIM_US="${SIM_US:-30e6}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-for s in ${seeds}; do
-  echo "=== sweep seed ${s} (sim ${SIM_US} us) ==="
-  out="$(SEED="${s}" "${here}/prep_pipeline_overflow.sh")"
-  echo "${out}"
-  if echo "${out}" | grep -q 'REPRODUCED'; then
-    echo "SWEEP: reproduced at seed ${s}"
-    exit 0
-  fi
+for b in ${bursts}; do
+  for p in ${periods}; do
+    for s in ${seeds}; do
+      echo "=== sweep burst=${b}us period=${p}us seed=${s} (sim ${SIM_US} us) ==="
+      out="$(SEED="${s}" LAT_BURST_US="${b}" LAT_PERIOD_US="${p}" \
+             "${here}/prep_pipeline_overflow.sh")"
+      echo "${out}"
+      if echo "${out}" | grep -q 'REPRODUCED'; then
+        echo "SWEEP: reproduced at seed=${s} burst=${b} period=${p}"
+        exit 0
+      fi
+    done
+  done
 done
 
-echo "SWEEP: no overflow across seeds [${seeds}]"
+echo "SWEEP: no overflow across bursts [${bursts}] x periods [${periods}] x seeds [${seeds}]"
 exit 1

@@ -12,6 +12,10 @@
 #   SEED      base random seed (default 1); per-device seeds derive from it
 #   SIM_US    sim length in microseconds (default 60e6 = 60 s)
 #   BIN_SUFFIX which build to run; default the accelerated overlay build.
+#   LAT_BURST_US   DUT CPU-latency injector: irq-locked busy-burn per burst
+#                  (default 0 = off). Models the spinlock/ISR/flash-stall
+#                  latency real hardware has and zero-CPU-time bsim lacks.
+#   LAT_PERIOD_US  sleep between bursts (default 3300)
 #
 # Always exits 0; prints exactly one RESULT line:
 #   RESULT: PREP_PIPELINE_OVERFLOW_REPRODUCED (seed=N)   <- the assert fired
@@ -25,7 +29,9 @@ sim_us="${SIM_US:-60e6}"
 verbosity_level="${verbosity_level:-2}"
 bin_suffix="${BIN_SUFFIX:-prj_conf_overlay_accel_conf}"
 bin="./bs_${BOARD_TS}_tests_bsim_bluetooth_ll_prep_pipeline_${bin_suffix}"
-sid="prep_pipe_s${seed}"
+lat_burst="${LAT_BURST_US:-0}"
+lat_period="${LAT_PERIOD_US:-3300}"
+sid="prep_pipe_s${seed}_b${lat_burst}_p${lat_period}"
 
 # Per-device crystal drift (-xo_drift, fraction; -40e-6 = -40ppm). The coprime
 # 6/7 intervals already beat the events through collision, so this is just a
@@ -40,7 +46,8 @@ cd "${BSIM_OUT_PATH}/bin"
 "${bin}" -v=${verbosity_level} -s="${sid}" -d=0 -RealEncryption=0 \
   -testid=split -rs=$((seed + 10)) > "${sid}_split.log" 2>&1 &
 "${bin}" -v=${verbosity_level} -s="${sid}" -d=1 -RealEncryption=0 -xo_drift=${DUT_DRIFT} \
-  -testid=dut   -rs=$((seed + 20)) > "${sid}_dut.log" 2>&1 &
+  -testid=dut   -rs=$((seed + 20)) \
+  -argstest lat_burst=${lat_burst} lat_period=${lat_period} > "${sid}_dut.log" 2>&1 &
 "${bin}" -v=${verbosity_level} -s="${sid}" -d=2 -RealEncryption=0 -xo_drift=${HOST_DRIFT} \
   -testid=host  -rs=$((seed + 30)) > "${sid}_host.log" 2>&1 &
 
@@ -52,8 +59,8 @@ wait
 if grep -qiE 'ASSERTION FAIL' "${sid}"_*.log 2>/dev/null; then
   echo "----- assert context (DUT) -----"
   grep -iE 'ASSERTION FAIL|lll\.c|\[next\]' "${sid}_dut.log" | head -5
-  echo "RESULT: PREP_PIPELINE_OVERFLOW_REPRODUCED (seed=${seed})"
+  echo "RESULT: PREP_PIPELINE_OVERFLOW_REPRODUCED (seed=${seed} burst=${lat_burst} period=${lat_period})"
 else
-  echo "RESULT: NO_OVERFLOW (seed=${seed})"
+  echo "RESULT: NO_OVERFLOW (seed=${seed} burst=${lat_burst} period=${lat_period})"
 fi
 exit 0

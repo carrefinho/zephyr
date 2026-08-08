@@ -81,11 +81,13 @@ jobs:
           app=tests/bsim/bluetooth/ll/prep_pipeline conf_overlay=overlay_accel.conf compile
           wait_for_background_jobs
 
-      - name: Sweep seeds until the prepare pipeline overflows
+      - name: Sweep CPU-latency matrix until the prepare pipeline overflows
         shell: bash
         run: |
           export ZEPHYR_BASE="${PWD}"
-          export SEEDS="1 2 3 4 5"
+          export SEEDS="1 2"
+          export BURSTS_US="100 400 1500 6000"
+          export PERIODS_US="3300 5700"
           export SIM_US=30e6
           tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh
 
