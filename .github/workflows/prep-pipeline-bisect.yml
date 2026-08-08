@@ -1,0 +1,158 @@
+# Binary-search the v3.5.0..v4.1.0 controller history for the commit that
+# introduced the zmk#3370 prepare-pipeline overflow.
+#
+# Methodology: whole-tree bisect across this range is infeasible in one west
+# workspace (module pins, HWMv2 board rework). Instead each candidate commit's
+# `subsys/bluetooth/controller` subtree is transplanted into the 4.1 build tree
+# and the reproducing cell (stock depth-7, burst=400us period=3300us) is run.
+# Endpoints are validated first: the v3.5.0 subtree must be GOOD (no overflow)
+# and the v4.1.0 subtree BAD (overflows), else the transplant methodology is
+# broken and the job aborts. Build failures mark a commit UNTESTABLE and probe
+# linear neighbors.
+#
+# Manual dispatch only - run after the A/B arms, when no known patch holds.
+name: Prep-Pipeline Regression Bisect
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bisect:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    container:
+      image: docker.io/zephyrprojectrtos/ci:v0.27.4
+      options: "--entrypoint /bin/bash"
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+      BSIM_OUT_PATH: /opt/bsim/
+      BSIM_COMPONENTS_PATH: /opt/bsim/components
+      BOARD: nrf52_bsim
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve west topdir
+        run: echo "WEST_TOPDIR=$(realpath "$GITHUB_WORKSPACE/..")" >> "$GITHUB_ENV"
+
+      - name: Cache west modules
+        uses: actions/cache@v5
+        env:
+          cache-name: cache-zephyr-modules
+        with:
+          path: |
+            ${{ env.WEST_TOPDIR }}/modules
+            ${{ env.WEST_TOPDIR }}/tools
+            ${{ env.WEST_TOPDIR }}/bootloader
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('west.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+        timeout-minutes: 5
+        continue-on-error: true
+
+      - name: West init + update
+        run: |
+          west init -l . || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update 1> west.update.log 2>&1
+          west forall -c 'git reset --hard HEAD'
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
+
+      - name: Fetch upstream range (partial clone)
+        shell: bash
+        run: |
+          git remote add up https://github.com/zephyrproject-rtos/zephyr.git || true
+          git fetch --filter=blob:none up tag v3.5.0 tag v4.1.0
+          git rev-list --reverse v3.5.0..v4.1.0 -- subsys/bluetooth/controller > revs.txt
+          echo "controller commits in range: $(wc -l < revs.txt)"
+
+      - name: Bisect by controller-subtree transplant
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+
+          # Test one subtree state: transplant, build stock depth-7, run the
+          # reproducing cell. Echoes GOOD / BAD / UNTESTABLE.
+          test_rev() {
+            local rev="$1"
+            git checkout -q "${rev}" -- subsys/bluetooth/controller
+            if ! (app=tests/bsim/bluetooth/ll/prep_pipeline compile \
+                  && wait_for_background_jobs) >> build.log 2>&1; then
+              git checkout -q HEAD -- subsys/bluetooth/controller
+              rm -rf bsim_out
+              echo UNTESTABLE
+              return
+            fi
+            local out
+            out="$(BIN_SUFFIX=prj_conf SEEDS='1 2' BURSTS_US='400' \
+                   PERIODS_US='3300' SIM_US=30e6 \
+                   tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh || true)"
+            git checkout -q HEAD -- subsys/bluetooth/controller
+            if echo "${out}" | grep -q 'REPRODUCED'; then echo BAD; else echo GOOD; fi
+          }
+
+          mapfile -t revs < revs.txt
+          n=${#revs[@]}
+          echo "=== endpoint validation ==="
+          v35=$(test_rev v3.5.0)
+          echo "v3.5.0 subtree: ${v35}"
+          v41=$(test_rev v4.1.0)
+          echo "v4.1.0 subtree: ${v41}"
+          if [ "${v35}" != "GOOD" ] || [ "${v41}" != "BAD" ]; then
+            echo "ENDPOINTS INVALID (v3.5.0=${v35}, v4.1.0=${v41}) - transplant methodology broken, aborting"
+            exit 1
+          fi
+
+          lo=0; hi=$((n - 1))   # invariant: revs[<lo] GOOD side, revs[>hi] BAD side
+          first_bad=""
+          while [ ${lo} -le ${hi} ]; do
+            mid=$(( (lo + hi) / 2 ))
+            # probe outward from mid past UNTESTABLE commits
+            idx=-1
+            for off in 0 1 -1 2 -2 3 -3 4 -4 5 -5; do
+              t=$(( mid + off ))
+              [ ${t} -lt ${lo} ] || [ ${t} -gt ${hi} ] && continue
+              r="${revs[${t}]}"
+              v=$(test_rev "${r}")
+              echo "[$((hi - lo + 1)) left] ${t}/${n} ${r:0:12} -> ${v} ($(git log -1 --format=%s "${r}"))"
+              if [ "${v}" != "UNTESTABLE" ]; then idx=${t}; break; fi
+            done
+            if [ ${idx} -lt 0 ]; then
+              echo "window [${lo},${hi}] entirely untestable, narrowing arbitrarily"
+              hi=$(( mid - 1 ))
+              continue
+            fi
+            if [ "${v}" = "BAD" ]; then
+              first_bad="${revs[${idx}]}"
+              hi=$(( idx - 1 ))
+            else
+              lo=$(( idx + 1 ))
+            fi
+          done
+
+          echo "=== BISECT RESULT ==="
+          if [ -n "${first_bad}" ]; then
+            echo "first BAD controller commit: ${first_bad}"
+            git log -1 "${first_bad}"
+          else
+            echo "no BAD commit isolated (check log for untestable gaps)"
+          fi
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prep-pipeline-bisect-logs
+          path: |
+            build.log
+            revs.txt
+          if-no-files-found: ignore
