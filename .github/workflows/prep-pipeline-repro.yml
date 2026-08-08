@@ -311,6 +311,11 @@ jobs:
             subsys/bluetooth/controller/ll_sw/lll.h
           grep -n -B1 -A2 'define EVENT_PIPELINE_MAX' subsys/bluetooth/controller/ll_sw/lll.h
           export ZEPHYR_BASE="${PWD}"
+          # 3.5's cmake needs the SDK location handed to it in this image
+          # (find_package has no registry hit here); newest installed SDK
+          # satisfies the >=0.16 requirement.
+          export ZEPHYR_SDK_INSTALL_DIR="$(ls -d /opt/toolchains/zephyr-sdk-* | sort -V | tail -1)"
+          echo "Using SDK: ${ZEPHYR_SDK_INSTALL_DIR}"
           source tests/bsim/compile.source
           app=tests/bsim/bluetooth/ll/prep_pipeline conf_file=prj_35.conf \
             conf_overlay=overlay_accel.conf compile
