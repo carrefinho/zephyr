@@ -25,7 +25,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tag: ["v3.6.0", "v3.7.0", "v4.0.0"]
+        include:
+          # 3.5-era Kconfig (no BT_BUF_ACL_RX_COUNT_EXTRA)
+          - tag: "v3.6.0"
+            conf: "prj_35.conf"
+          - tag: "v3.7.0"
+            conf: "prj_35.conf"
+          - tag: "v4.0.0"
+            conf: "prj_35.conf"
+          # 4.1+ Kconfig. v4.4.0 also carries c2eb901 (prepare-deferred) +
+          # 796c0002 (LL_ASSERT_DBG), which is where upstream incidentally
+          # reworked the -EBUSY path — expected to HOLD. If it overflows, the
+          # bug is still live upstream and the report changes completely.
+          - tag: "v4.4.0"
+            conf: "prj.conf"
     container:
       image: docker.io/zephyrprojectrtos/ci:v0.27.4
       options: "--entrypoint /bin/bash"
@@ -80,7 +93,7 @@ jobs:
           echo "Using SDK: ${ZEPHYR_SDK_INSTALL_DIR}"
           echo "ZEPHYR_SDK_INSTALL_DIR=${ZEPHYR_SDK_INSTALL_DIR}" >> "$GITHUB_ENV"
           source tests/bsim/compile.source
-          app=tests/bsim/bluetooth/ll/prep_pipeline conf_file=prj_35.conf compile
+          app=tests/bsim/bluetooth/ll/prep_pipeline conf_file=${{ matrix.conf }} compile
           wait_for_background_jobs
 
       - name: "Sweep the discriminating band on ${{ matrix.tag }}"
@@ -88,7 +101,7 @@ jobs:
         run: |
           cd "${LTOP}/zephyr"
           export ZEPHYR_BASE="${PWD}"
-          export BIN_SUFFIX=prj_35_conf
+          export BIN_SUFFIX="$(echo "${{ matrix.conf }}" | tr . _)"
           export SEEDS="1 2"
           export BURSTS_US="300 400"
           export PERIODS_US="3300 5700"
