@@ -89,7 +89,86 @@ jobs:
           export BURSTS_US="100 400 1500 6000"
           export PERIODS_US="3300 5700"
           export SIM_US=30e6
-          tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh
+          tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh \
+            | tee sweep_base.log
+          cell="$(grep 'SWEEP: reproduced' sweep_base.log)"
+          echo "REPRO_SEED=$(echo "${cell}" | sed 's/.*seed=\([0-9]*\).*/\1/')" >> "$GITHUB_ENV"
+          echo "REPRO_BURST=$(echo "${cell}" | sed 's/.*burst=\([0-9]*\).*/\1/')" >> "$GITHUB_ENV"
+          echo "REPRO_PERIOD=$(echo "${cell}" | sed 's/.*period=\([0-9]*\).*/\1/')" >> "$GITHUB_ENV"
+
+      - name: "Signature check: gdb-walk the prep MFIFO at the assert"
+        shell: bash
+        run: |
+          command -v gdb >/dev/null || { apt-get update -qq && apt-get install -y -qq gdb; }
+          export ZEPHYR_BASE="${PWD}"
+          export SEED="${REPRO_SEED}" LAT_BURST_US="${REPRO_BURST}" LAT_PERIOD_US="${REPRO_PERIOD}"
+          export SIM_US=30e6
+          tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_inspect.sh
+
+      - name: "A/B arm 1: cherry-pick 93b951d6fb3 + 0d1b4d2ba6b (the 2-commit fix)"
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          git fetch --depth=2 https://github.com/zephyrproject-rtos/zephyr.git \
+            93b951d6fb31fc499a0594dd4433fb9136944c4c \
+            0d1b4d2ba6b5f46e7b76b49500ddd3d8dde28f2d
+          git -c user.name=ci -c user.email=ci@local \
+            cherry-pick -n 93b951d6fb31fc499a0594dd4433fb9136944c4c
+          git -c user.name=ci -c user.email=ci@local \
+            cherry-pick -n 0d1b4d2ba6b5f46e7b76b49500ddd3d8dde28f2d
+          rm -rf bsim_out
+          source tests/bsim/compile.source
+          app=tests/bsim/bluetooth/ll/prep_pipeline conf_overlay=overlay_accel.conf compile
+          wait_for_background_jobs
+          export SEEDS="1 2"
+          export BURSTS_US="400 1500 6000"
+          export PERIODS_US="3300 5700"
+          export SIM_US=30e6
+          set +e
+          tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh \
+            | tee sweep_fix2.log
+          set -e
+          if grep -q 'SWEEP: reproduced' sweep_fix2.log; then
+            echo "ARM RESULT: 2-COMMIT FIX STILL OVERFLOWS"
+          else
+            echo "ARM RESULT: 2-COMMIT FIX HELD (no overflow across the matrix)"
+          fi
+          git reset --hard HEAD -q
+
+      - name: "A/B arm 2: revert ee844550b7e (short-prepare rework; Vinayak's proposal)"
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          git fetch --depth=2 https://github.com/zephyrproject-rtos/zephyr.git \
+            ee844550b7edd06b082a7c960f72454f301d28c7
+          git -c user.name=ci -c user.email=ci@local \
+            revert -n ee844550b7edd06b082a7c960f72454f301d28c7
+          rm -rf bsim_out
+          source tests/bsim/compile.source
+          app=tests/bsim/bluetooth/ll/prep_pipeline conf_overlay=overlay_accel.conf compile
+          wait_for_background_jobs
+          export SEEDS="1 2"
+          export BURSTS_US="400 1500 6000"
+          export PERIODS_US="3300 5700"
+          export SIM_US=30e6
+          set +e
+          tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh \
+            | tee sweep_revert.log
+          set -e
+          if grep -q 'SWEEP: reproduced' sweep_revert.log; then
+            echo "ARM RESULT: ee844550 REVERT STILL OVERFLOWS"
+          else
+            echo "ARM RESULT: ee844550 REVERT HELD (no overflow across the matrix)"
+          fi
+          git reset --hard HEAD -q
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "=== base ===";   grep -E 'RESULT:|SWEEP:' sweep_base.log   || true
+          echo "=== fix2 ===";   grep -E 'SWEEP:' sweep_fix2.log           || true
+          echo "=== revert ==="; grep -E 'SWEEP:' sweep_revert.log         || true
 
       - name: Upload logs
         if: always()
@@ -98,5 +177,6 @@ jobs:
           name: prep-pipeline-repro-logs
           path: |
             /opt/bsim/bin/prep_pipe_*.log
+            sweep_*.log
             west.update.log
           if-no-files-found: ignore
