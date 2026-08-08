@@ -1,0 +1,114 @@
+# Version-ladder for the zmk#3370 prepare-pipeline overflow: build the SAME
+# test + latency matrix against upstream release tags between the known-good
+# v3.5.0 and known-bad v4.1.0, to bracket the regression into one minor range
+# before bisecting within it.
+#
+# Known from the main workflow: v3.5.0(+zmk-fixes) HOLDS the 300-400us band
+# (stock depth-7, 60s x 8 cells); v4.1.0(+zmk-fixes) overflows at 300us within
+# ~1 s. The whole-range controller-subtree transplant bisect is blocked by the
+# ~v3.7 HCI-driver-devicetree rework, hence this ladder.
+name: Prep-Pipeline Version Ladder
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "bsim-prep-pipeline-repro"
+    paths:
+      - ".github/workflows/prep-pipeline-ladder.yml"
+
+jobs:
+  ladder:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: ["v3.6.0", "v3.7.0", "v4.0.0"]
+    container:
+      image: docker.io/zephyrprojectrtos/ci:v0.27.4
+      options: "--entrypoint /bin/bash"
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+      BSIM_OUT_PATH: /opt/bsim/
+      BSIM_COMPONENTS_PATH: /opt/bsim/components
+      BOARD: nrf52_bsim
+      BOARD_TS: nrf52_bsim
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout (test sources)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve ladder west topdir
+        run: echo "LTOP=$(realpath "$GITHUB_WORKSPACE/..")/ladder-${{ matrix.tag }}" >> "$GITHUB_ENV"
+
+      - name: Cache ladder west modules
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ env.LTOP }}/modules
+            ${{ env.LTOP }}/tools
+          key: ${{ runner.os }}-ladder-modules-${{ matrix.tag }}
+        timeout-minutes: 5
+        continue-on-error: true
+
+      - name: Clone ${{ matrix.tag }} + west update
+        shell: bash
+        run: |
+          mkdir -p "${LTOP}" && cd "${LTOP}"
+          [ -d zephyr ] || git clone --depth 1 --branch "${{ matrix.tag }}" \
+            https://github.com/zephyrproject-rtos/zephyr.git zephyr
+          west init -l zephyr || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update 1> west.update.log 2>&1
+
+      - name: Port test + compile (stock depth-7)
+        shell: bash
+        run: |
+          cd "${LTOP}/zephyr"
+          cp -r "${GITHUB_WORKSPACE}/tests/bsim/bluetooth/ll/prep_pipeline" \
+            tests/bsim/bluetooth/ll/
+          export ZEPHYR_BASE="${PWD}"
+          export ZEPHYR_SDK_INSTALL_DIR="$(ls -d /opt/toolchains/zephyr-sdk-* | sort -V | tail -1)"
+          echo "Using SDK: ${ZEPHYR_SDK_INSTALL_DIR}"
+          echo "ZEPHYR_SDK_INSTALL_DIR=${ZEPHYR_SDK_INSTALL_DIR}" >> "$GITHUB_ENV"
+          source tests/bsim/compile.source
+          app=tests/bsim/bluetooth/ll/prep_pipeline conf_file=prj_35.conf compile
+          wait_for_background_jobs
+
+      - name: "Sweep the discriminating band on ${{ matrix.tag }}"
+        shell: bash
+        run: |
+          cd "${LTOP}/zephyr"
+          export ZEPHYR_BASE="${PWD}"
+          export BIN_SUFFIX=prj_35_conf
+          export SEEDS="1 2"
+          export BURSTS_US="300 400"
+          export PERIODS_US="3300 5700"
+          export SIM_US=30e6
+          set +e
+          tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh \
+            | tee "sweep_ladder_${{ matrix.tag }}.log"
+          set -e
+          if grep -q 'SWEEP: reproduced' "sweep_ladder_${{ matrix.tag }}.log"; then
+            echo "LADDER RESULT: ${{ matrix.tag }} OVERFLOWS"
+          else
+            echo "LADDER RESULT: ${{ matrix.tag }} HELD"
+          fi
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prep-pipeline-ladder-${{ matrix.tag }}-logs
+          path: |
+            /opt/bsim/bin/prep_pipe_*.log
+            ${{ env.LTOP }}/zephyr/sweep_ladder_*.log
+          if-no-files-found: ignore
