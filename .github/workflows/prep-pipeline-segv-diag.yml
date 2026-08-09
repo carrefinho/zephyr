@@ -81,13 +81,19 @@ jobs:
           command -v gdb >/dev/null || { apt-get update -qq && apt-get install -y -qq gdb; }
           cd "${Z35}/zephyr"
           export ZEPHYR_BASE="${PWD}"
-          # Try a few seeds: the segfault hits ~90% of cells but not all.
-          for s in 1 2 3; do
-            echo "=================== seed ${s} ==================="
-            SEED="${s}" BIN_SUFFIX=prj_35_conf LAT_BURST_US=400 LAT_PERIOD_US=3300 \
-              SIM_US=30e6 \
-              tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_inspect.sh \
-              | tail -60
+          # Control first: injector fully disabled (burst=0). If the DUT still
+          # dies, the crash is traffic-driven (old ACL path vs our saturating
+          # blast) and every injector mode is exonerated. Then one injected
+          # run for comparison.
+          for cfg in "0 3300" "400 3300"; do
+            set -- ${cfg}
+            for s in 1 2; do
+              echo "=================== burst=$1 period=$2 seed=${s} ==================="
+              SEED="${s}" BIN_SUFFIX=prj_35_conf LAT_BURST_US="$1" LAT_PERIOD_US="$2" \
+                SIM_US=30e6 \
+                tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_inspect.sh \
+                | tail -45
+            done
           done
 
       - name: Upload logs
