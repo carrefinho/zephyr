@@ -70,6 +70,16 @@ static volatile bool scanning;
 static uint32_t lat_burst_us;
 static uint32_t lat_period_us = 3300;
 
+/* lat_isr=1 (default): burn the burst inside a k_timer ISR. In the simulator
+ * all interrupts dispatch sequentially from one loop, so an ISR busy-wait
+ * delays the radio the same way as masking - but through well-formed dispatch
+ * paths only. The original thread + irq_lock() + k_busy_wait() mode
+ * (lat_isr=0) SIGSEGVs 3.5-3.7-era builds: an IRQ latched during the locked
+ * burst gets dispatched at irq_unlock() through an unpopulated
+ * irq_vector_table entry (jump to a garbage address in posix_irq_handler).
+ */
+static uint32_t lat_isr = 1;
+
 /* Generous stack: on the 3.5-3.7-era kernels a 1024 B stack for this thread
  * silently overflowed on the POSIX arch (no MPU) - corrupted ACL traffic then
  * a native SIGSEGV ~30 ms after arming, which masqueraded as a passing rung
@@ -78,8 +88,24 @@ static uint32_t lat_period_us = 3300;
 static K_THREAD_STACK_DEFINE(lat_stack, 4096);
 static struct k_thread lat_thread;
 
+static void lat_burst_timer_cb(struct k_timer *timer)
+{
+	/* ISR context: the busy-wait stalls the simulator's sequential IRQ
+	 * dispatch loop, delaying radio/ticker processing by the burst length.
+	 */
+	k_busy_wait(lat_burst_us);
+}
+
+static K_TIMER_DEFINE(lat_burst_timer, lat_burst_timer_cb, NULL);
+
 static void lat_injector(void *p1, void *p2, void *p3)
 {
+	if (lat_isr) {
+		k_timer_start(&lat_burst_timer, K_USEC(lat_period_us),
+			      K_USEC(lat_period_us));
+		return;
+	}
+
 	while (true) {
 		k_usleep(lat_period_us);
 
@@ -94,6 +120,9 @@ static void test_args_parse(int argc, char *argv[])
 {
 	for (int i = 0; i < argc; i++) {
 		if (sscanf(argv[i], "lat_burst=%u", &lat_burst_us) == 1) {
+			continue;
+		}
+		if (sscanf(argv[i], "lat_isr=%u", &lat_isr) == 1) {
 			continue;
 		}
 		if (sscanf(argv[i], "lat_period=%u", &lat_period_us) == 1) {
@@ -245,8 +274,9 @@ static void dut_main(void)
 		k_thread_create(&lat_thread, lat_stack, K_THREAD_STACK_SIZEOF(lat_stack),
 				lat_injector, NULL, NULL, NULL,
 				K_PRIO_PREEMPT(0), 0, K_NO_WAIT);
-		printk("DUT latency injector: %u us irq-locked burst every %u us\n",
-		       lat_burst_us, lat_period_us);
+		printk("DUT latency injector (%s mode): %u us burst every %u us\n",
+		       lat_isr ? "ISR" : "irq-locked-thread", lat_burst_us,
+		       lat_period_us);
 	}
 
 	/* Saturate the central link forever. The host saturates the peripheral
