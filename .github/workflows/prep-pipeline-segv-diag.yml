@@ -1,0 +1,100 @@
+# Diagnose the native SIGSEGV that kills the prep_pipeline DUT ~30 ms after
+# the blast + injector start on 3.5-3.7-era trees (invalidating those ladder
+# rungs). Runs the dying cell on ZMK's actual v3.5.0+zmk-fixes tree (full
+# 3.5 host + 3.5 controller - the same build as the control-v35 job, where
+# 26/28 cells died) with the DUT under gdb: gdb halts on SIGSEGV and prints
+# the backtrace, which tells us whether the crash is in our test app, the
+# 3.5 host stack, or the 3.5 controller (the bisect showed it FOLLOWS the
+# controller subtree when transplanted into a 4.0 tree).
+name: Prep-Pipeline Segfault Diagnosis
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "bsim-prep-pipeline-repro"
+    paths:
+      - ".github/workflows/prep-pipeline-segv-diag.yml"
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    container:
+      image: docker.io/zephyrprojectrtos/ci:v0.27.4
+      options: "--entrypoint /bin/bash"
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+      BSIM_OUT_PATH: /opt/bsim/
+      BSIM_COMPONENTS_PATH: /opt/bsim/components
+      BOARD: nrf52_bsim
+      BOARD_TS: nrf52_bsim
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout (test sources)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve 3.5 west topdir
+        run: echo "Z35=$(realpath "$GITHUB_WORKSPACE/..")/z35" >> "$GITHUB_ENV"
+
+      - name: Cache 3.5 west modules
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ env.Z35 }}/modules
+            ${{ env.Z35 }}/tools
+          key: ${{ runner.os }}-z35-modules-v3.5.0-zmk-fixes
+        timeout-minutes: 5
+        continue-on-error: true
+
+      - name: Clone ZMK Zephyr 3.5 + west update
+        shell: bash
+        run: |
+          mkdir -p "${Z35}" && cd "${Z35}"
+          [ -d zephyr ] || git clone --depth 1 --branch v3.5.0+zmk-fixes \
+            https://github.com/zmkfirmware/zephyr.git zephyr
+          west init -l zephyr || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update 1> west35.update.log 2>&1
+
+      - name: Port test + compile (stock depth-7)
+        shell: bash
+        run: |
+          cd "${Z35}/zephyr"
+          cp -r "${GITHUB_WORKSPACE}/tests/bsim/bluetooth/ll/prep_pipeline" \
+            tests/bsim/bluetooth/ll/
+          export ZEPHYR_BASE="${PWD}"
+          export ZEPHYR_SDK_INSTALL_DIR="$(ls -d /opt/toolchains/zephyr-sdk-* | sort -V | tail -1)"
+          source tests/bsim/compile.source
+          app=tests/bsim/bluetooth/ll/prep_pipeline conf_file=prj_35.conf compile
+          wait_for_background_jobs
+
+      - name: Run the dying cell with the DUT under gdb
+        shell: bash
+        run: |
+          command -v gdb >/dev/null || { apt-get update -qq && apt-get install -y -qq gdb; }
+          cd "${Z35}/zephyr"
+          export ZEPHYR_BASE="${PWD}"
+          # Try a few seeds: the segfault hits ~90% of cells but not all.
+          for s in 1 2 3; do
+            echo "=================== seed ${s} ==================="
+            SEED="${s}" BIN_SUFFIX=prj_35_conf LAT_BURST_US=400 LAT_PERIOD_US=3300 \
+              SIM_US=30e6 \
+              tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_inspect.sh \
+              | tail -60
+          done
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prep-pipeline-segv-diag-logs
+          path: |
+            /opt/bsim/bin/prep_pipe_inspect*.log
+          if-no-files-found: ignore
