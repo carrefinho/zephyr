@@ -70,7 +70,12 @@ static volatile bool scanning;
 static uint32_t lat_burst_us;
 static uint32_t lat_period_us = 3300;
 
-static K_THREAD_STACK_DEFINE(lat_stack, 1024);
+/* Generous stack: on the 3.5-3.7-era kernels a 1024 B stack for this thread
+ * silently overflowed on the POSIX arch (no MPU) - corrupted ACL traffic then
+ * a native SIGSEGV ~30 ms after arming, which masqueraded as a passing rung
+ * until the verdict logic required end-of-sim evidence.
+ */
+static K_THREAD_STACK_DEFINE(lat_stack, 4096);
 static struct k_thread lat_thread;
 
 static void lat_injector(void *p1, void *p2, void *p3)
