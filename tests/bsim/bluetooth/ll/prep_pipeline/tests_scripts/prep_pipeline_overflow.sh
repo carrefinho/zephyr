@@ -61,6 +61,13 @@ wait
 # controller asserts (e.g. the EVENT_OVERHEAD_START family in
 # lll_central.c/lll_peripheral.c, the zmk#3331 sibling) are a DIFFERENT
 # failure and must not count as this repro.
+#
+# A NO_OVERFLOW verdict additionally requires POSITIVE evidence that the DUT
+# survived to the end of the simulation: the bstest ticker prints a PASSED /
+# NOT PASSED line at sim end. A DUT that dies any other way (segfault of the
+# native binary - seen on 3.5-3.7-era builds ~30 ms into the blast - or any
+# silent termination) produces neither an assert nor the end marker, and MUST
+# NOT be counted as a clean pass.
 if grep -qE 'ASSERTION FAIL \[next\] @ .*lll\.c' "${sid}"_*.log 2>/dev/null; then
   echo "----- assert context (DUT) -----"
   grep -iE 'ASSERTION FAIL|lll\.c|\[next\]' "${sid}_dut.log" | head -5
@@ -69,7 +76,11 @@ elif grep -qiE 'ASSERTION FAIL' "${sid}"_*.log 2>/dev/null; then
   echo "----- other assert (DUT) -----"
   grep -iE 'ASSERTION FAIL' "${sid}"_*.log | head -3
   echo "RESULT: OTHER_ASSERT (seed=${seed} burst=${lat_burst} period=${lat_period})"
-else
+elif grep -qE 'TESTCASE (NOT )?PASSED at exit|PASSED at' "${sid}_dut.log" 2>/dev/null; then
   echo "RESULT: NO_OVERFLOW (seed=${seed} burst=${lat_burst} period=${lat_period})"
+else
+  echo "----- DUT log tail (no assert, no end-of-sim marker) -----"
+  tail -3 "${sid}_dut.log" 2>/dev/null
+  echo "RESULT: HARNESS_DEATH (seed=${seed} burst=${lat_burst} period=${lat_period})"
 fi
 exit 0

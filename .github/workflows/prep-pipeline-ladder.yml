@@ -117,8 +117,10 @@ jobs:
           set -e
           if grep -q 'SWEEP: reproduced' "sweep_ladder_${{ matrix.tag }}.log"; then
             echo "LADDER RESULT: ${{ matrix.tag }} OVERFLOWS"
+          elif grep -q 'HARNESS_DEATH' "sweep_ladder_${{ matrix.tag }}.log"; then
+            echo "LADDER RESULT: ${{ matrix.tag }} UNTESTABLE ($(grep -c 'HARNESS_DEATH' "sweep_ladder_${{ matrix.tag }}.log") of $(grep -c 'RESULT:' "sweep_ladder_${{ matrix.tag }}.log") cells died without reaching sim end)"
           else
-            echo "LADDER RESULT: ${{ matrix.tag }} HELD"
+            echo "LADDER RESULT: ${{ matrix.tag }} HELD (all cells reached sim end)"
           fi
 
       - name: Upload logs
