@@ -120,7 +120,7 @@ jobs:
           elif grep -q 'HARNESS_DEATH' "sweep_ladder_${{ matrix.tag }}.log"; then
             echo "LADDER RESULT: ${{ matrix.tag }} UNTESTABLE ($(grep -c 'HARNESS_DEATH' "sweep_ladder_${{ matrix.tag }}.log") of $(grep -c 'RESULT:' "sweep_ladder_${{ matrix.tag }}.log") cells died without reaching sim end)"
           else
-            echo "LADDER RESULT: ${{ matrix.tag }} HELD (all cells reached sim end)"
+            echo "LADDER RESULT: ${{ matrix.tag }} HELD (no [next]; $(grep -c 'RESULT: NO_OVERFLOW' "sweep_ladder_${{ matrix.tag }}.log") cells reached sim end, $(grep -c 'RESULT: OTHER_ASSERT' "sweep_ladder_${{ matrix.tag }}.log") died on non-pipeline asserts)"
           fi
 
       - name: Upload logs
