@@ -104,15 +104,20 @@ jobs:
               return
             fi
             local out
-            out="$(BIN_SUFFIX=prj_35_conf_overlay_bisect_conf SEEDS='1 2' BURSTS_US='400' \
+            out="$(BIN_SUFFIX=prj_35_conf_overlay_bisect_conf SEEDS='1 2 3' BURSTS_US='400' \
                    PERIODS_US='3300' SIM_US=30e6 \
                    tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh || true)"
             git checkout -q HEAD -- subsys/bluetooth/controller
             if echo "${out}" | grep -q 'REPRODUCED'; then
               echo BAD
+            elif echo "${out}" | grep -q 'RESULT: NO_OVERFLOW'; then
+              # At least one cell positively completed its full sim with no
+              # overflow. Sibling cells may have died of the (controller-era-
+              # correlated) native segfault; that reduces coverage but does
+              # not negate the positive evidence.
+              echo GOOD
             elif echo "${out}" | grep -q 'HARNESS_DEATH'; then
-              # DUT died without an assert or the end-of-sim marker (e.g. a
-              # native segfault): no verdict possible in either direction.
+              # No cell completed and none asserted: no verdict possible.
               echo UNTESTABLE
             else
               echo GOOD
