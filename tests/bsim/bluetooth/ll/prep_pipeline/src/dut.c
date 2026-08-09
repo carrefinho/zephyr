@@ -70,15 +70,25 @@ static volatile bool scanning;
 static uint32_t lat_burst_us;
 static uint32_t lat_period_us = 3300;
 
-/* lat_isr=1 (default): burn the burst inside a k_timer ISR. In the simulator
- * all interrupts dispatch sequentially from one loop, so an ISR busy-wait
- * delays the radio the same way as masking - but through well-formed dispatch
- * paths only. The original thread + irq_lock() + k_busy_wait() mode
- * (lat_isr=0) SIGSEGVs 3.5-3.7-era builds: an IRQ latched during the locked
- * burst gets dispatched at irq_unlock() through an unpopulated
- * irq_vector_table entry (jump to a garbage address in posix_irq_handler).
+/* Injection mode (-argstest lat_isr=):
+ *   0 - thread + irq_lock() + k_busy_wait(). Faithful, but SIGSEGVs the
+ *       3.5-3.7-era simulator: an IRQ latched during the locked burst is
+ *       dispatched at irq_unlock() through an unpopulated irq_vector_table
+ *       entry (jump to a garbage address in posix_irq_handler).
+ *   1 - k_busy_wait() inside a k_timer ISR. Crash-free but INERT: the
+ *       simulator advances time with nested dispatch during the busy-wait,
+ *       so the radio is serviced on schedule and nothing is delayed
+ *       (verified: 4.0/4.1 stop reproducing under this mode).
+ *   2 - (default) thread that irq_disable()s only the controller's own
+ *       IRQs (RADIO, TIMER0, RTC0, SWI4, SWI5) around the busy-wait. Their
+ *       vectors are populated, so re-enabling dispatches pending IRQs
+ *       through valid entries on every tree era, while the radio genuinely
+ *       waits out the burst. Only currently-enabled IRQs are touched.
  */
-static uint32_t lat_isr = 1;
+static uint32_t lat_isr = 2;
+
+/* nRF52 controller IRQ numbers: RADIO=1, TIMER0=8, RTC0=11, SWI4=20, SWI5=21 */
+static const unsigned int lat_masked_irqs[] = {1, 8, 11, 20, 21};
 
 /* Generous stack: on the 3.5-3.7-era kernels a 1024 B stack for this thread
  * silently overflowed on the POSIX arch (no MPU) - corrupted ACL traffic then
@@ -100,7 +110,7 @@ static K_TIMER_DEFINE(lat_burst_timer, lat_burst_timer_cb, NULL);
 
 static void lat_injector(void *p1, void *p2, void *p3)
 {
-	if (lat_isr) {
+	if (lat_isr == 1) {
 		k_timer_start(&lat_burst_timer, K_USEC(lat_period_us),
 			      K_USEC(lat_period_us));
 		return;
@@ -109,10 +119,29 @@ static void lat_injector(void *p1, void *p2, void *p3)
 	while (true) {
 		k_usleep(lat_period_us);
 
-		unsigned int key = irq_lock();
+		if (lat_isr == 2) {
+			uint32_t was = 0;
 
-		k_busy_wait(lat_burst_us);
-		irq_unlock(key);
+			for (int i = 0; i < ARRAY_SIZE(lat_masked_irqs); i++) {
+				if (arch_irq_is_enabled(lat_masked_irqs[i])) {
+					was |= BIT(i);
+					irq_disable(lat_masked_irqs[i]);
+				}
+			}
+
+			k_busy_wait(lat_burst_us);
+
+			for (int i = 0; i < ARRAY_SIZE(lat_masked_irqs); i++) {
+				if (was & BIT(i)) {
+					irq_enable(lat_masked_irqs[i]);
+				}
+			}
+		} else {
+			unsigned int key = irq_lock();
+
+			k_busy_wait(lat_burst_us);
+			irq_unlock(key);
+		}
 	}
 }
 
