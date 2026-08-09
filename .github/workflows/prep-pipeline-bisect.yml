@@ -108,7 +108,15 @@ jobs:
                    PERIODS_US='3300' SIM_US=30e6 \
                    tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh || true)"
             git checkout -q HEAD -- subsys/bluetooth/controller
-            if echo "${out}" | grep -q 'REPRODUCED'; then echo BAD; else echo GOOD; fi
+            if echo "${out}" | grep -q 'REPRODUCED'; then
+              echo BAD
+            elif echo "${out}" | grep -q 'HARNESS_DEATH'; then
+              # DUT died without an assert or the end-of-sim marker (e.g. a
+              # native segfault): no verdict possible in either direction.
+              echo UNTESTABLE
+            else
+              echo GOOD
+            fi
           }
 
           mapfile -t revs < revs.txt
@@ -165,4 +173,5 @@ jobs:
           path: |
             ${{ env.LTOP }}/zephyr/build.log
             ${{ env.LTOP }}/zephyr/revs.txt
+            /opt/bsim/bin/prep_pipe_*.log
           if-no-files-found: ignore
