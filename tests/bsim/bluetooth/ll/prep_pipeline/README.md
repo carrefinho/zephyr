@@ -73,6 +73,22 @@ per-run args, no rebuild:
   - `1`: busy-wait inside a timer ISR — **inert** (the simulator nests
     dispatch during it); kept only as a negative control.
 
+## Reference CI runs
+
+- [repro + A/B arms](https://github.com/carrefinho/zephyr/actions/runs/31297556296)
+  — base overflows at the cell above; the `-ECANCELED` fix holds the full
+  matrix; `93b951d6fb3`+`0d1b4d2ba6b`, the quick-check, the `ee844550` revert
+  and the `2b30259` revert all still overflow. The gdb pipeline walk at the
+  assert is in the `prep-pipeline-repro-logs` artifact.
+- [bisect](https://github.com/carrefinho/zephyr/actions/runs/31296039722) —
+  v3.7.0..v4.0.0 controller-subtree transplant into a v4.0.0 tree, endpoints
+  validated, converges on `abfe5f17a949`; GOOD verdicts require a positively
+  completed full sim.
+- [version ladder](https://github.com/carrefinho/zephyr/actions/runs/31297570029)
+  — v4.0.0 overflows, v4.4.0 does not (its cells instead die on the
+  defer-budget `LL_ASSERT_DBG`); v3.6/v3.7 full trees are UNTESTABLE per the
+  simulator limitation above.
+
 ## Run
 
 Linux + BabbleSim at `/opt/bsim` (or use the workflows in
