@@ -307,6 +307,52 @@ jobs:
           fi
           git checkout -q -- subsys/bluetooth/controller/ll_sw/nordic/lll/lll_conn.c
 
+      - name: "A/B arm 6: 355648a69f51 alone (radio tmr status reset)"
+        shell: bash
+        run: |
+          # zmk#3480 (bobbanon) reports that upstream 355648a69f51
+          # "Fix missing radio tmr status reset" alone stopped their field
+          # faults (0 in 101.5 h vs 8 in 100.5 h), tested WITHOUT the
+          # -ECANCELED fix. Its commit message describes stale PPI/DPPI after
+          # radio_disable() desyncing radio vs controller state, with the
+          # symptom "Central role was not transmitting in the next interval"
+          # -> trx_cnt stays 0 -> defer iterations fill the pipeline. That is
+          # a TRIGGER for the same trx_cnt==0 condition our -EBUSY strand
+          # amplifies. Question this arm answers: is that race the trigger in
+          # THIS harness too?
+          #   HELD          -> the race is (also) our trigger; injected
+          #                    latency was provoking it
+          #   STILL OVERFLOWS -> latency alone strands; the two patches are
+          #                    independent links in the chain
+          export ZEPHYR_BASE="${PWD}"
+          git fetch --depth=2 https://github.com/zephyrproject-rtos/zephyr.git \
+            355648a69f5137c68d86fe577ddb256e7da74d12
+          git -c user.name=ci -c user.email=ci@local \
+            cherry-pick -n 355648a69f5137c68d86fe577ddb256e7da74d12
+          git diff --cached --stat
+          rm -rf bsim_out
+          source tests/bsim/compile.source
+          app=tests/bsim/bluetooth/ll/prep_pipeline conf_overlay=overlay_accel.conf compile
+          app=tests/bsim/bluetooth/ll/prep_pipeline compile
+          wait_for_background_jobs
+          export SEEDS="1 2"
+          export BURSTS_US="400 1500 6000"
+          export PERIODS_US="3300 5700"
+          export SIM_US=30e6
+          set +e
+          tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh \
+            | tee sweep_tmrreset.log
+          BIN_SUFFIX=prj_conf SEEDS="1 2 3 4" BURSTS_US="400" SIM_US=60e6 \
+            tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh \
+            | tee sweep_tmrreset_d7.log
+          set -e
+          if grep -q 'SWEEP: reproduced' sweep_tmrreset.log sweep_tmrreset_d7.log; then
+            echo "ARM RESULT: 355648 ALONE STILL OVERFLOWS (race is not this harness's trigger)"
+          else
+            echo "ARM RESULT: 355648 ALONE HELD (race may be this harness's trigger)"
+          fi
+          git reset --hard HEAD -q
+
       - name: Summary
         if: always()
         shell: bash
@@ -320,6 +366,8 @@ jobs:
           echo "=== rev2b30259 depth7 ==="; grep -E 'SWEEP:' sweep_rev2b30259_d7.log || true
           echo "=== fix_ebusy accel ==="; grep -E 'SWEEP:' sweep_fix_ebusy.log || true
           echo "=== fix_ebusy depth7 ==="; grep -E 'SWEEP:' sweep_fix_ebusy_d7.log || true
+          echo "=== 355648 accel ==="; grep -E 'SWEEP:' sweep_tmrreset.log || true
+          echo "=== 355648 depth7 ==="; grep -E 'SWEEP:' sweep_tmrreset_d7.log || true
 
       - name: Upload logs
         if: always()
