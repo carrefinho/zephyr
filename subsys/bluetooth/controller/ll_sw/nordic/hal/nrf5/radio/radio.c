@@ -26,6 +26,7 @@
 #include "ll_sw/pdu.h"
 
 #include "radio_internal.h"
+#include "lll/strand_trace.h"
 
 /* Converts the GPIO controller in a FEM property's GPIO specification
  * to its nRF register map pointer.
@@ -148,6 +149,8 @@ static void           *isr_cb_param;
 
 void isr_radio(void)
 {
+	STRAND_TRACE("isr_radio dis=%u cb=%p param=%p", radio_has_disabled() ? 1U : 0U,
+		     (void *)isr_cb, isr_cb_param);
 	if (radio_has_disabled()) {
 		isr_cb(isr_cb_param);
 	}
@@ -155,6 +158,7 @@ void isr_radio(void)
 
 void radio_isr_set(radio_isr_cb_t cb, void *param)
 {
+	STRAND_TRACE("isr_set cb=%p param=%p", (void *)cb, param);
 	irq_disable(HAL_RADIO_IRQn);
 
 	isr_cb_param = param;
@@ -1397,6 +1401,9 @@ void radio_tmr_tifs_set(uint32_t tifs)
 uint32_t radio_tmr_start(uint8_t trx, uint32_t ticks_start, uint32_t remainder)
 {
 	uint32_t remainder_us;
+
+	STRAND_TRACE("tmr_start trx=%u ticks_start=%u rem=%u now=%u", trx, ticks_start,
+		     remainder, cntr_cnt_get());
 
 	/* Convert jitter to positive offset remainder in microseconds */
 	hal_ticker_remove_jitter(&ticks_start, &remainder);
