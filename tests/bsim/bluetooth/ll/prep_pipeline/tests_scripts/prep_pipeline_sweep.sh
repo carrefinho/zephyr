@@ -27,6 +27,8 @@ bursts="${BURSTS_US:-100 400 1500 6000}"
 periods="${PERIODS_US:-3300 5700}"
 export SIM_US="${SIM_US:-30e6}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+clean=0
+dead=0
 
 for b in ${bursts}; do
   for p in ${periods}; do
@@ -39,9 +41,23 @@ for b in ${bursts}; do
         echo "SWEEP: reproduced at seed=${s} burst=${b} period=${p}"
         exit 0
       fi
+      # Track POSITIVE completions separately. A cell that died in the harness
+      # (segfault, link lost, simulation torn down early) is NOT evidence that
+      # the controller survived, and must never be aggregated as "no overflow".
+      if echo "${out}" | grep -q 'RESULT: NO_OVERFLOW'; then
+        clean=$((clean + 1))
+      else
+        dead=$((dead + 1))
+      fi
     done
   done
 done
 
-echo "SWEEP: no overflow across bursts [${bursts}] x periods [${periods}] x seeds [${seeds}]"
+total=$((clean + dead))
+if [ "${clean}" -eq 0 ]; then
+  echo "SWEEP: NO VALID CELLS - ${dead}/${total} died in the harness; this sweep proves NOTHING"
+  exit 2
+fi
+echo "SWEEP: no overflow across bursts [${bursts}] x periods [${periods}] x seeds [${seeds}]" \
+     "(${clean}/${total} cells reached end-of-sim; ${dead} died in the harness)"
 exit 1

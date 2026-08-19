@@ -114,8 +114,10 @@ jobs:
           set -e
           if grep -q 'SWEEP: reproduced' sweep_target_split.log; then
             echo "ARM RESULT: SINGLE-LINK PERIPHERAL ALSO OVERFLOWS (topology NOT required)"
+          elif grep -q 'NO VALID CELLS' sweep_target_split.log; then
+            echo "ARM RESULT: single-link peripheral VOID - every cell died in the harness, proves nothing"
           else
-            echo "ARM RESULT: single-link peripheral HELD across the wide matrix"
+            echo "ARM RESULT: single-link peripheral HELD (with positively-completed cells; see counts)"
           fi
 
       - name: "Arm 3 (control): inject into HOST - central, single link"
@@ -130,8 +132,10 @@ jobs:
           set -e
           if grep -q 'SWEEP: reproduced' sweep_target_host.log; then
             echo "ARM RESULT: SINGLE-LINK CENTRAL ALSO OVERFLOWS (topology NOT required)"
+          elif grep -q 'NO VALID CELLS' sweep_target_host.log; then
+            echo "ARM RESULT: single-link central VOID - every cell died in the harness, proves nothing"
           else
-            echo "ARM RESULT: single-link central HELD across the wide matrix"
+            echo "ARM RESULT: single-link central HELD (with positively-completed cells; see counts)"
           fi
 
       - name: Summary
