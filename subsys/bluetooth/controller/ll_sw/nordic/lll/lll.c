@@ -35,6 +35,7 @@
 #include "lll_prof_internal.h"
 
 #include "hal/debug.h"
+#include "strand_trace.h"
 
 #if defined(CONFIG_BT_CTLR_ZLI)
 #define IRQ_CONNECT_FLAGS IRQ_ZERO_LATENCY
@@ -888,6 +889,9 @@ int lll_prepare_resolve(lll_is_abort_cb_t is_abort_cb, lll_abort_cb_t abort_cb,
 		/* Store the next prepare for deferred call */
 		next = ull_prepare_enqueue(is_abort_cb, abort_cb, prepare_param,
 					   prepare_cb, is_resume);
+		STRAND_TRACE("enq p=%p ticks=%u lazy=%u resume=%u -> %p",
+			     prepare_param->param, prepare_param->ticks_at_expire,
+			     prepare_param->lazy, is_resume, next);
 		LL_ASSERT(next);
 
 #if !defined(CONFIG_BT_CTLR_LOW_LAT)
@@ -1311,6 +1315,10 @@ preempt_find_preemptor:
 
 	/* Check if current event want to continue */
 	err = event.curr.is_abort_cb(ready->prepare_param.param, event.curr.param, &resume_cb);
+	STRAND_TRACE("preempt ready=%p ticks=%u curr=%p err=%d%s",
+		     ready->prepare_param.param, ready->prepare_param.ticks_at_expire,
+		     event.curr.param, err,
+		     (err == -EBUSY) ? "  <-- STRAND (neither aborted)" : "");
 	if (!err || (err == -EBUSY)) {
 		/* Returns -EBUSY when same curr and next state/role, do not
 		 * abort same curr and next event.

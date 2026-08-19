@@ -1,0 +1,131 @@
+# What produces the FIRST stranded prepare?
+#
+# Runs the single-link CENTRAL reproduction (host device, one connection, no
+# overlapping second link - the simplest system that still overflows) with an
+# event-by-event trace of the prepare pipeline compiled in:
+#
+#   prep_cb.c   an event's prepare_cb runs; it becomes event.curr
+#   prep_reset  trx_cnt zeroed for the new event
+#   trx++       an exchange completed (clears the -EBUSY condition)
+#   enq         a prepare entered the pipeline
+#   cab.c/.p    is_abort_cb consulted: next, curr, trx/tx count
+#   preempt     the decision, flagged when it returns -EBUSY (the strand)
+#
+# bsim charges zero simulated time for computation, so this instrumentation
+# does not perturb the timing under study.
+name: Prep-Pipeline Strand Trace
+
+on:
+  push:
+    branches:
+      - "bsim-strand-origin"
+  workflow_dispatch:
+
+jobs:
+  trace:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    container:
+      image: docker.io/zephyrprojectrtos/ci:v0.27.4
+      options: "--entrypoint /bin/bash"
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+      BSIM_OUT_PATH: /opt/bsim/
+      BSIM_COMPONENTS_PATH: /opt/bsim/components
+      BOARD: nrf52_bsim
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve west topdir
+        run: echo "WEST_TOPDIR=$(realpath "$GITHUB_WORKSPACE/..")" >> "$GITHUB_ENV"
+
+      - name: Cache west modules
+        uses: actions/cache@v5
+        env:
+          cache-name: cache-zephyr-modules
+        with:
+          path: |
+            ${{ env.WEST_TOPDIR }}/modules
+            ${{ env.WEST_TOPDIR }}/tools
+            ${{ env.WEST_TOPDIR }}/bootloader
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('west.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+        timeout-minutes: 5
+        continue-on-error: true
+
+      - name: West init + update
+        run: |
+          west init -l . || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update 1> west.update.log 2>&1
+          west forall -c 'git reset --hard HEAD'
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
+
+      - name: Compile with the strand trace
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+          app=tests/bsim/bluetooth/ll/prep_pipeline conf_overlay=overlay_trace.conf compile
+          wait_for_background_jobs
+
+      - name: "Trace the single-link CENTRAL reproduction"
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          set +e
+          LAT_TARGET=host SEED=1 LAT_BURST_US=400 LAT_PERIOD_US=3300 SIM_US=30e6 \
+            BIN_SUFFIX=prj_conf_overlay_trace_conf \
+            tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_overflow.sh \
+            | tee trace_run.log
+          set -e
+          grep -q 'REPRODUCED' trace_run.log || {
+            echo "::error::trace build did not reproduce - instrumentation changed behaviour"; exit 1; }
+
+      - name: "Extract: the FIRST strand and its lead-up"
+        shell: bash
+        run: |
+          hostlog="$(ls -t /opt/bsim/bin/*_host.log | head -1)"
+          echo "host log: ${hostlog}"
+          cp "${hostlog}" host_trace.log
+          first="$(grep -n 'STRAND (neither aborted)' host_trace.log | head -1 | cut -d: -f1)"
+          if [ -z "${first}" ]; then
+            echo "No -EBUSY strand line found; last 60 STRAND lines:"
+            grep 'STRAND ' host_trace.log | tail -60
+            exit 0
+          fi
+          echo "=============== FIRST STRAND at line ${first} ==============="
+          echo "--- 80 lines BEFORE it (how the pipeline got there) ---"
+          sed -n "$(( first > 80 ? first - 80 : 1 )),$(( first - 1 ))p" host_trace.log \
+            | grep 'STRAND '
+          echo "--- the strand itself ---"
+          sed -n "${first}p" host_trace.log
+          echo "--- 40 lines AFTER (the cascade) ---"
+          sed -n "$(( first + 1 )),$(( first + 40 ))p" host_trace.log | grep 'STRAND '
+          echo "=============== totals ==============="
+          echo "strand lines: $(grep -c 'STRAND (neither aborted)' host_trace.log)"
+          echo "enq lines:    $(grep -c 'STRAND enq' host_trace.log)"
+          echo "trx++ lines:  $(grep -c 'STRAND trx++' host_trace.log)"
+          echo "late prepares:$(grep -c 'LATE overhead' host_trace.log)"
+
+      - name: Upload trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prep-pipeline-strand-trace
+          path: |
+            trace_run.log
+            host_trace.log
+            /opt/bsim/bin/*_host.log
+          if-no-files-found: warn
+          retention-days: 14

@@ -42,6 +42,7 @@
 #include <zephyr/bluetooth/hci_types.h>
 
 #include "hal/debug.h"
+#include "strand_trace.h"
 
 static int init_reset(void);
 static void isr_done(void *param);
@@ -148,6 +149,7 @@ void lll_conn_flush(uint16_t handle, struct lll_conn *lll)
 
 void lll_conn_prepare_reset(void)
 {
+	STRAND_TRACE("prep_reset (trx %u -> 0)", trx_cnt);
 	tx_cnt = 0U;
 	trx_cnt = 0U;
 	crc_valid = 0U;
@@ -170,6 +172,9 @@ int lll_conn_central_is_abort_cb(void *next, void *curr,
 		return 0;
 	}
 
+	STRAND_TRACE("cab.c next=%p curr=%p trx=%u forced=%u", next, curr, trx_cnt,
+		     lll->forced);
+
 	/* Do not be aborted by same event if a single central trx has not been
 	 * exchanged.
 	 */
@@ -191,6 +196,9 @@ int lll_conn_peripheral_is_abort_cb(void *next, void *curr,
 	if (lll->forced) {
 		return 0;
 	}
+
+	STRAND_TRACE("cab.p next=%p curr=%p tx=%u forced=%u", next, curr, tx_cnt,
+		     lll->forced);
 
 	/* Do not be aborted by same event if a single peripheral trx has not
 	 * been exchanged.
@@ -329,6 +337,7 @@ void lll_conn_isr_rx(void *param)
 	}
 
 	trx_cnt++;
+	STRAND_TRACE("trx++ -> %u", trx_cnt);
 
 	is_done = 0U;
 	tx_release = NULL;

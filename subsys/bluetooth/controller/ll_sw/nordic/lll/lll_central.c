@@ -39,6 +39,7 @@
 
 #include <soc.h>
 #include "hal/debug.h"
+#include "strand_trace.h"
 
 static int init_reset(void);
 static int prepare_cb(struct lll_prepare_param *p);
@@ -115,6 +116,8 @@ static int prepare_cb(struct lll_prepare_param *p)
 
 		return 0;
 	}
+
+	STRAND_TRACE("prep_cb.c p=%p ticks=%u lazy=%u", lll, p->ticks_at_expire, p->lazy);
 
 	/* Reset connection event global variables */
 	lll_conn_prepare_reset();
@@ -247,6 +250,7 @@ static int prepare_cb(struct lll_prepare_param *p)
 	overhead = lll_preempt_calc(ull, (TICKER_ID_CONN_BASE + lll->handle), ticks_at_event);
 	/* check if preempt to start has changed */
 	if (overhead) {
+		STRAND_TRACE("prep_cb.c LATE overhead=%u -> clean abort", overhead);
 		LL_ASSERT_OVERHEAD(overhead);
 
 		radio_isr_set(lll_isr_abort, lll);

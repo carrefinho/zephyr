@@ -1430,3 +1430,10 @@ config BT_CTLR_DEBUG_PINS
 	  the code.
 
 endif # BT_LL_SW_SPLIT
+
+config BT_CTLR_STRAND_TRACE
+	bool "Trace prepare-pipeline enqueue/preempt/abort decisions"
+	help
+	  Print an event-by-event trace of prepare enqueues, preempt decisions,
+	  is_abort_cb returns and trx_cnt transitions. Used to identify what
+	  produces the first stranded prepare. Debug only; very verbose.
