@@ -157,6 +157,8 @@ jobs:
           name: prep-pipeline-topology-logs
           path: |
             sweep_target_*.log
-            /opt/bsim/results/**/*.log
+            /opt/bsim/bin/*_split.log
+            /opt/bsim/bin/*_dut.log
+            /opt/bsim/bin/*_host.log
           if-no-files-found: warn
           retention-days: 14

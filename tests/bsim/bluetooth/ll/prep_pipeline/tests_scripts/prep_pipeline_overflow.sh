@@ -103,6 +103,14 @@ elif grep -qiE 'ASSERTION FAIL' "${sid}"_*.log 2>/dev/null; then
   echo "RESULT: OTHER_ASSERT (${cell})"
 elif grep -qE 'TESTCASE (NOT )?PASSED at exit|PASSED at' "${victim}" 2>/dev/null; then
   echo "RESULT: NO_OVERFLOW (${cell})"
+elif [ "${lat_target}" = "split" ] && \
+     awk '/SPLIT alive t=/ { t = $0; sub(/.*SPLIT alive t=/, "", t); sub(/[^0-9].*/, "", t); if (t + 0 >= 20) found = 1 } END { exit !found }' "${victim}" 2>/dev/null; then
+  # The split device never gets the framework's end-of-sim marker in its log,
+  # so its survival is evidenced by its own heartbeat instead: reaching t>=20 s
+  # of a 30 s sim means the controller ran the whole blast without asserting.
+  echo "----- split heartbeat tail -----"
+  grep 'SPLIT alive' "${victim}" | tail -2
+  echo "RESULT: NO_OVERFLOW (${cell})"
 else
   echo "----- ${lat_target} log tail (no assert, no end-of-sim marker) -----"
   tail -3 "${victim}" 2>/dev/null

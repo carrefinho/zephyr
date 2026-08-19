@@ -23,7 +23,7 @@
 
 #include "prep_pipeline.h"
 
-#define WAIT_TIME 60 /* seconds */
+#define WAIT_TIME 25 /* seconds; must stay BELOW the sim length or the tick never fires */
 
 extern enum bst_result_t bst_result;
 
@@ -40,6 +40,7 @@ extern enum bst_result_t bst_result;
 	} while (0)
 
 static volatile bool connected_flag;
+static unsigned int split_uptime_s;
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -97,9 +98,18 @@ static void split_main(void)
 	k_sleep(K_MSEC(SETTLE_DELAY_MS));
 	lat_inject_start("SPLIT");
 
-	/* Idle; the sink service absorbs writes. Survive the whole sim. */
+	/* Idle; the sink service absorbs writes. Survive the whole sim.
+	 *
+	 * Heartbeat every second: this device never receives the framework's
+	 * end-of-sim marker in its log, so "survived" has to be positively
+	 * evidenced by its own output. Without this the verdict logic can only
+	 * ever return HARNESS_DEATH for a split-targeted run, regardless of
+	 * what the controller actually did.
+	 */
 	while (true) {
-		k_sleep(K_MSEC(SETTLE_DELAY_MS));
+		k_sleep(K_SECONDS(1));
+		printk("SPLIT alive t=%u s conn=%d\n", ++split_uptime_s,
+		       connected_flag ? 1 : 0);
 	}
 }
 
