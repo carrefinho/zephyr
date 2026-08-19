@@ -15,6 +15,8 @@
 #include "time_machine.h"
 #include "bstests.h"
 
+#include "lat_inject.h"
+
 #include <zephyr/sys/printk.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
@@ -85,6 +87,16 @@ static void split_main(void)
 	}
 	printk("Split advertising as %s\n", SPLIT_NAME);
 
+	/* Single-link CONTROL: wait for the DUT's link, then run the identical
+	 * injector. Split is peripheral on exactly one connection, so if the
+	 * overflow needs a dual-role device this can never reproduce.
+	 */
+	while (!connected_flag) {
+		k_sleep(K_MSEC(20));
+	}
+	k_sleep(K_MSEC(SETTLE_DELAY_MS));
+	lat_inject_start("SPLIT");
+
 	/* Idle; the sink service absorbs writes. Survive the whole sim. */
 	while (true) {
 		k_sleep(K_MSEC(SETTLE_DELAY_MS));
@@ -108,6 +120,7 @@ static void split_tick(bs_time_t HW_device_time)
 static const struct bst_test_instance split_tests[] = {
 	{
 		.test_id = "split",
+		.test_args_f = lat_inject_args_parse,
 		.test_descr = "Split peripheral: connectable write sink for the DUT.",
 		.test_pre_init_f = split_init,
 		.test_tick_f = split_tick,

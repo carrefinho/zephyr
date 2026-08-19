@@ -16,6 +16,8 @@
 #include "time_machine.h"
 #include "bstests.h"
 
+#include "lat_inject.h"
+
 #include <zephyr/sys/printk.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
@@ -145,6 +147,9 @@ static void host_main(void)
 		return;
 	}
 
+	/* Single-link CONTROL: host is central on exactly one connection. */
+	lat_inject_start("HOST");
+
 	printk("Host blasting DUT peripheral link\n");
 	while (dut_conn) {
 		sink_blast_one(dut_conn, dut_sink);
@@ -167,6 +172,7 @@ static void host_tick(bs_time_t HW_device_time)
 static const struct bst_test_instance host_tests[] = {
 	{
 		.test_id = "host",
+		.test_args_f = lat_inject_args_parse,
 		.test_descr = "Host central: connects to the DUT and saturates its "
 			      "peripheral link.",
 		.test_pre_init_f = host_init,

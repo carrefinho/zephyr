@@ -1,0 +1,154 @@
+# Does the prepare-pipeline overflow REQUIRE a dual-role device?
+#
+# The zmk#3370 crash only ever appeared on split CENTRALS - devices holding two
+# connections on one radio. This job runs the IDENTICAL CPU-latency injector on
+# three devices in the same simulation:
+#
+#   dut   - dual-role (peripheral to host + central to split)   <- known BAD
+#   split - peripheral on exactly ONE connection                <- control
+#   host  - central on exactly ONE connection                   <- control
+#
+# If the single-link devices cannot be made to overflow while the dual-role one
+# overflows at the first cell, the topology is load-bearing and the trigger is
+# the two links preempting each other, not CPU latency per se.
+#
+# Arm 1 is a KNOWN-BAD equivalence check: if the dual-role DUT does NOT
+# reproduce, the injector is inert for this build and every HELD verdict in the
+# other arms is meaningless (this is exactly how the ISR-mode injector fooled
+# the version ladder). The job fails loudly in that case.
+name: Prep-Pipeline Topology Control
+
+on:
+  push:
+    branches:
+      - "bsim-strand-origin"
+  workflow_dispatch:
+
+jobs:
+  topology:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    container:
+      image: docker.io/zephyrprojectrtos/ci:v0.27.4
+      options: "--entrypoint /bin/bash"
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+      BSIM_OUT_PATH: /opt/bsim/
+      BSIM_COMPONENTS_PATH: /opt/bsim/components
+      BOARD: nrf52_bsim
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve west topdir
+        run: echo "WEST_TOPDIR=$(realpath "$GITHUB_WORKSPACE/..")" >> "$GITHUB_ENV"
+
+      - name: Cache west modules
+        uses: actions/cache@v5
+        env:
+          cache-name: cache-zephyr-modules
+        with:
+          path: |
+            ${{ env.WEST_TOPDIR }}/modules
+            ${{ env.WEST_TOPDIR }}/tools
+            ${{ env.WEST_TOPDIR }}/bootloader
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('west.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+        timeout-minutes: 5
+        continue-on-error: true
+
+      - name: West init + update
+        run: |
+          west init -l . || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update 1> west.update.log 2>&1
+          west forall -c 'git reset --hard HEAD'
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
+
+      - name: Compile (accel + stock depth-7)
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+          app=tests/bsim/bluetooth/ll/prep_pipeline conf_overlay=overlay_accel.conf compile
+          app=tests/bsim/bluetooth/ll/prep_pipeline compile
+          wait_for_background_jobs
+
+      - name: "Arm 1 (KNOWN-BAD equivalence): inject into the dual-role DUT"
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          set +e
+          LAT_TARGET=dut SEEDS="1 2" BURSTS_US="400" PERIODS_US="3300" SIM_US=30e6 \
+            tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh \
+            | tee sweep_target_dut.log
+          set -e
+          if grep -q 'SWEEP: reproduced' sweep_target_dut.log; then
+            echo "ARM RESULT: dual-role DUT REPRODUCED (injector is live; controls are meaningful)"
+          else
+            echo "ARM RESULT: dual-role DUT DID NOT REPRODUCE - INJECTOR INERT FOR THIS BUILD"
+            echo "::error::Known-BAD control failed; single-link HELD verdicts would be meaningless."
+            exit 1
+          fi
+
+      - name: "Arm 2 (control): inject into SPLIT - peripheral, single link"
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          set +e
+          # Deliberately a WIDER matrix than the dual-role arm needed, so a
+          # HELD verdict here cannot be dismissed as under-testing.
+          LAT_TARGET=split SEEDS="1 2 3" BURSTS_US="400 1500 6000" PERIODS_US="3300 5700" \
+            SIM_US=30e6 \
+            tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh \
+            | tee sweep_target_split.log
+          set -e
+          if grep -q 'SWEEP: reproduced' sweep_target_split.log; then
+            echo "ARM RESULT: SINGLE-LINK PERIPHERAL ALSO OVERFLOWS (topology NOT required)"
+          else
+            echo "ARM RESULT: single-link peripheral HELD across the wide matrix"
+          fi
+
+      - name: "Arm 3 (control): inject into HOST - central, single link"
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          set +e
+          LAT_TARGET=host SEEDS="1 2 3" BURSTS_US="400 1500 6000" PERIODS_US="3300 5700" \
+            SIM_US=30e6 \
+            tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh \
+            | tee sweep_target_host.log
+          set -e
+          if grep -q 'SWEEP: reproduced' sweep_target_host.log; then
+            echo "ARM RESULT: SINGLE-LINK CENTRAL ALSO OVERFLOWS (topology NOT required)"
+          else
+            echo "ARM RESULT: single-link central HELD across the wide matrix"
+          fi
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          for f in sweep_target_dut.log sweep_target_split.log sweep_target_host.log; do
+            echo "=== ${f}"; grep -E 'SWEEP:|RESULT:' "${f}" 2>/dev/null | tail -6
+          done
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prep-pipeline-topology-logs
+          path: |
+            sweep_target_*.log
+            /opt/bsim/results/**/*.log
+          if-no-files-found: warn
+          retention-days: 14

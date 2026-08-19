@@ -7,6 +7,7 @@ project(bsim_test_prep_pipeline)
 
 target_sources(app PRIVATE
   src/main.c
+  src/lat_inject.c
   src/gatt_sink.c
   src/split.c
   src/dut.c
