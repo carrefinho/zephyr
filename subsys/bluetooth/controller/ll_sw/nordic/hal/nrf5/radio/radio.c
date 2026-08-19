@@ -573,6 +573,7 @@ void radio_tx_enable(void)
 
 void radio_disable(void)
 {
+	STRAND_TRACE("radio_disable");
 #if !defined(CONFIG_BT_CTLR_TIFS_HW)
 	hal_radio_sw_switch_cleanup();
 #endif /* !CONFIG_BT_CTLR_TIFS_HW */
@@ -1217,6 +1218,7 @@ uint32_t radio_tmr_isr_set(uint32_t start_us, radio_isr_cb_t cb, void *param)
 
 void radio_tmr_status_reset(void)
 {
+	STRAND_TRACE("tmr_status_reset");
 #if defined(CONFIG_BT_CTLR_NRF_GRTC)
 	nrf_grtc_sys_counter_compare_event_disable(NRF_GRTC, HAL_CNTR_GRTC_CC_IDX_RADIO);
 #else /* !CONFIG_BT_CTLR_NRF_GRTC */
@@ -1796,6 +1798,7 @@ void radio_tmr_stop(void)
 
 void radio_tmr_hcto_configure(uint32_t hcto_us)
 {
+	STRAND_TRACE("hcto_cfg us=%u", hcto_us);
 	nrf_timer_cc_set(EVENT_TIMER, HAL_EVENT_TIMER_HCTO_CC_OFFSET, hcto_us);
 
 	hal_radio_recv_timeout_cancel_ppi_config();

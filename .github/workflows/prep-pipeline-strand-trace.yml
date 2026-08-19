@@ -95,47 +95,35 @@ jobs:
       - name: "Extract: the FIRST strand and its lead-up"
         shell: bash
         run: |
+          set +e   # greps that legitimately match nothing must not kill the step
           hostlog="$(ls -t /opt/bsim/bin/*_host.log | head -1)"
           cp "${hostlog}" host_trace.log
           first="$(grep -n 'STRAND (neither aborted)' host_trace.log | head -1 | cut -d: -f1)"
           [ -n "${first}" ] || { echo "no strand found"; tail -40 host_trace.log; exit 1; }
 
-          echo "=============== the stuck event: last prepare_cb BEFORE the strand ==========="
+          echo "=============== HEALTHY event immediately before, for comparison ============"
+          prev2="$(grep -n 'STRAND prep_cb' host_trace.log | awk -F: -v f="${first}" '$1 < f' | tail -2 | head -1 | cut -d: -f1)"
           lastprep="$(grep -n 'STRAND prep_cb' host_trace.log | awk -F: -v f="${first}" '$1 < f' | tail -1 | cut -d: -f1)"
-          echo "prepare_cb at line ${lastprep}; everything from there to the strand:"
+          sed -n "${prev2},$(( lastprep - 1 ))p" host_trace.log | grep 'STRAND ' | head -25
+
+          echo
+          echo "=============== THE STUCK EVENT, through the strand ========================="
           sed -n "${lastprep},${first}p" host_trace.log | grep 'STRAND '
 
           echo
-          echo "=============== AFTER the strand: does the radio ISR ever fire again? ========"
+          echo "=============== after the strand ==========================================="
           after="$(sed -n "$(( first + 1 )),\$p" host_trace.log)"
-          echo "isr_radio entries after the strand : $(echo "${after}" | grep -c 'STRAND isr_radio')"
-          echo "  ...of which dis=1 (real disable) : $(echo "${after}" | grep -c 'STRAND isr_radio dis=1')"
-          echo "isr_set calls after the strand     : $(echo "${after}" | grep -c 'STRAND isr_set')"
-          echo "tmr_start calls after the strand   : $(echo "${after}" | grep -c 'STRAND tmr_start')"
-          echo "prepare_cb after the strand        : $(echo "${after}" | grep -c 'STRAND prep_cb')"
-          echo "trx++ after the strand             : $(echo "${after}" | grep -c 'STRAND trx++')"
-          echo "--- first 15 non-preempt/enq/cab lines after the strand (if any) ---"
-          echo "${after}" | grep 'STRAND ' | grep -vE 'preempt|enq |cab\.' | head -15
+          for k in isr_radio isr_set tmr_start hcto_cfg radio_disable tmr_status_reset prep_cb 'trx++' 'inj mask off'; do
+            printf "  %-18s %s\n" "${k}" "$(echo "${after}" | grep -c "STRAND ${k}")"
+          done
 
           echo
-          echo "=============== anchor sanity: was the radio armed for a PAST tick? ========="
-          echo "(tmr_start ticks_start vs now, last 12 before the strand)"
-          sed -n "1,${first}p" host_trace.log | grep 'STRAND tmr_start' | tail -12 \
-            | sed 's/.*ticks_start=/ticks_start=/' \
-            | awk '{ ts=$1; sub(/ticks_start=/,"",ts); n=$3; sub(/now=/,"",n);
-                     printf "  %s  now=%s  delta=%+d %s\n", $1, n, ts-n, (ts-n < 0 ? "  <-- ANCHOR IN THE PAST" : "") }'
-
-          echo
-          echo "=============== resolve the ISR callbacks to symbols ======================="
-          elf="$(ls -t /opt/bsim/bin/../../*/zephyr/zephyr.elf 2>/dev/null | head -1)"
-          [ -f "${elf}" ] || elf="$(find "${WEST_TOPDIR}" -name zephyr.elf -path '*prep_pipeline*trace*' 2>/dev/null | head -1)"
-          echo "elf: ${elf:-<not found>}"
-          if [ -f "${elf}" ]; then
-            for cb in $(grep -ohE 'cb=0x[0-9a-f]+' host_trace.log | sort -u | cut -d= -f2); do
-              sym="$(nm -C "${elf}" 2>/dev/null | awk -v a="${cb#0x}" 'tolower($1)==tolower(a){print $3}' | head -1)"
-              echo "  ${cb} -> ${sym:-<unresolved>}"
-            done
-          fi
+          echo "=============== anchor sanity (tmr_start ticks_start vs now) ==============="
+          sed -n "1,${first}p" host_trace.log | grep 'STRAND tmr_start' | tail -10 | \
+            awk '{ for (i=1;i<=NF;i++) { if ($i ~ /^ticks_start=/) { ts=$i; sub(/ticks_start=/,"",ts) }
+                                          if ($i ~ /^now=/) { n=$i; sub(/now=/,"",n) } }
+                   printf "  ticks_start=%s now=%s delta=%+d%s\n", ts, n, ts-n, (ts-n<0?"  <-- PAST":"") }'
+          exit 0
 
       - name: Upload trace
         if: always()

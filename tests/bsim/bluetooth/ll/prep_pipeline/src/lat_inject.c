@@ -84,6 +84,7 @@ static void lat_injector(void *p1, void *p2, void *p3)
 				}
 			}
 
+			printk("STRAND inj mask on\n");
 			k_busy_wait(lat_burst_us);
 
 			for (int i = 0; i < ARRAY_SIZE(lat_masked_irqs); i++) {
@@ -91,6 +92,7 @@ static void lat_injector(void *p1, void *p2, void *p3)
 					irq_enable(lat_masked_irqs[i]);
 				}
 			}
+			printk("STRAND inj mask off\n");
 		} else {
 			unsigned int key = irq_lock();
 
