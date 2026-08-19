@@ -105,9 +105,13 @@ jobs:
         run: |
           export ZEPHYR_BASE="${PWD}"
           set +e
-          # Deliberately a WIDER matrix than the dual-role arm needed, so a
-          # HELD verdict here cannot be dismissed as under-testing.
-          LAT_TARGET=split SEEDS="1 2 3" BURSTS_US="400 1500 6000" PERIODS_US="3300 5700" \
+          # Ascending bursts. At 400 us+ a PERIPHERAL misses its anchors until
+          # supervision timeout drops the link, the DUT's blast loop exits and
+          # the simulation tears down before this device reaches its end-of-sim
+          # tick - every such cell is a HARNESS_DEATH and proves nothing. The
+          # gentle cells (100/200 us) are the ones that can actually complete,
+          # and they are what makes a HELD verdict here mean anything.
+          LAT_TARGET=split SEEDS="1 2 3" BURSTS_US="100 200 400 1500 6000" PERIODS_US="3300 5700" \
             SIM_US=30e6 \
             tests/bsim/bluetooth/ll/prep_pipeline/tests_scripts/prep_pipeline_sweep.sh \
             | tee sweep_target_split.log
