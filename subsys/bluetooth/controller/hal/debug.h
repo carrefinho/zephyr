@@ -43,6 +43,11 @@ void bt_ctlr_assert_handle(char *file, uint32_t line);
 #define LL_ASSERT_OVERHEAD(overhead) \
 	LL_ASSERT_MSG(false, "%s: Actual EVENT_OVERHEAD_START_US = %u", \
 		      __func__, HAL_TICKER_TICKS_TO_US(overhead));
+#elif defined(LLL_TEST_PREEMPT_HOOKS)
+/* bsim preempt_clobber test: count late prepares instead of dropping them silently. */
+extern volatile uint32_t lll_test_overhead_cnt;
+#define LL_ASSERT_OVERHEAD(overhead) \
+	do { ARG_UNUSED(overhead); lll_test_overhead_cnt++; } while (0)
 #else /* !CONFIG_BT_CTLR_ASSERT_OVERHEAD_START */
 #define LL_ASSERT_OVERHEAD(overhead) ARG_UNUSED(overhead)
 #endif /* !CONFIG_BT_CTLR_ASSERT_OVERHEAD_START */

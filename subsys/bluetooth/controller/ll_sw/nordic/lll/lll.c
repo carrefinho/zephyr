@@ -1044,6 +1044,29 @@ static uint8_t preempt_stop_ack;
 static uint8_t preempt_req;
 static uint8_t volatile preempt_ack;
 
+#if defined(LLL_TEST_PREEMPT_HOOKS)
+/* bsim preempt_clobber test hooks. lll_test_preempt_req_set() models a stray
+ * byte write from application code landing on preempt_req.
+ */
+volatile uint32_t lll_test_overhead_cnt;
+volatile uint32_t lll_test_preempt_skip_cnt;
+volatile uint32_t lll_test_preempt_start_cnt;
+
+void lll_test_preempt_req_set(uint8_t val)
+{
+	preempt_req = val;
+}
+
+void lll_test_preempt_state(uint8_t *req, uint8_t *ack, uint8_t *start_req,
+			    uint8_t *start_ack)
+{
+	*req = preempt_req;
+	*ack = preempt_ack;
+	*start_req = preempt_start_req;
+	*start_ack = preempt_start_ack;
+}
+#endif /* LLL_TEST_PREEMPT_HOOKS */
+
 static void ticker_stop_op_cb(uint32_t status, void *param)
 {
 	ARG_UNUSED(param);
@@ -1119,6 +1142,9 @@ static uint32_t preempt_ticker_start(struct lll_event *first,
 		diff = ticker_ticks_diff_get(ticks_at_preempt_new,
 					     ticks_at_preempt);
 		if ((diff & BIT(HAL_TICKER_CNTR_MSBIT)) == 0U) {
+#if defined(LLL_TEST_PREEMPT_HOOKS)
+			lll_test_preempt_skip_cnt++;
+#endif /* LLL_TEST_PREEMPT_HOOKS */
 			return TICKER_STATUS_SUCCESS;
 		}
 
@@ -1143,6 +1169,9 @@ static uint32_t preempt_ticker_start(struct lll_event *first,
 	}
 
 	preempt_start_req++;
+#if defined(LLL_TEST_PREEMPT_HOOKS)
+	lll_test_preempt_start_cnt++;
+#endif /* LLL_TEST_PREEMPT_HOOKS */
 
 	ticks_at_preempt = ticks_at_preempt_new;
 

@@ -1,0 +1,116 @@
+# bsim test: does zeroing the LLL's preempt_req on
+# each host disconnect (the claimed effect of the peripheral_battery_levels[234]
+# stray write) cause stale preempt state, late prepares, or
+# LL_ASSERT_OVERHEAD on a dual-role ZMK-central-shaped DUT? clobber=0 arms are
+# the control. Base: zmkfirmware/zephyr v4.1.0+zmk-fixes (pipeline fix in).
+name: Preempt-Req Clobber
+
+on:
+  push:
+    branches:
+      - "bsim-preempt-req-clobber"
+  workflow_dispatch:
+
+jobs:
+  clobber:
+    name: "load=${{ matrix.load }} host_int=${{ matrix.host_int }} ${{ matrix.build }}"
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        load: [0, 1]
+        host_int: [7, 12]
+        build: [prj_conf, prj_conf_overlay_assert_conf]
+    container:
+      image: docker.io/zephyrprojectrtos/ci:v0.27.4
+      options: "--entrypoint /bin/bash"
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+      BSIM_OUT_PATH: /opt/bsim/
+      BSIM_COMPONENTS_PATH: /opt/bsim/components
+      BOARD: nrf52_bsim
+    steps:
+      - name: Apply container owner mismatch workaround
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve west topdir
+        run: echo "WEST_TOPDIR=$(realpath "$GITHUB_WORKSPACE/..")" >> "$GITHUB_ENV"
+
+      - name: Cache west modules
+        uses: actions/cache@v5
+        env:
+          cache-name: cache-zephyr-modules
+        with:
+          path: |
+            ${{ env.WEST_TOPDIR }}/modules
+            ${{ env.WEST_TOPDIR }}/tools
+            ${{ env.WEST_TOPDIR }}/bootloader
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('west.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+        timeout-minutes: 5
+        continue-on-error: true
+
+      - name: West init + update
+        run: |
+          west init -l . || true
+          west config manifest.group-filter -- +ci,+optional
+          west config --global update.narrow true
+          west update 1> west.update.log 2>&1
+          west forall -c 'git reset --hard HEAD'
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-$(cat SDK_VERSION)" >> "$GITHUB_ENV"
+
+      - name: Compile
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          source tests/bsim/compile.source
+          if [ "${{ matrix.build }}" = prj_conf ]; then
+            app=tests/bsim/bluetooth/ll/preempt_clobber compile
+          else
+            app=tests/bsim/bluetooth/ll/preempt_clobber conf_overlay=overlay_assert.conf compile
+          fi
+          wait_for_background_jobs
+          for c in $(find . -path '*preempt_clobber*' -name .config); do
+            echo "== ${c}"
+            grep -E 'CONFIG_BT_CTLR_(XTAL_ADVANCED|ASSERT_OVERHEAD_START|SCHED_ADVANCED|LOW_LAT)\b|CONFIG_BT_CTLR_(XTAL_ADVANCED|ASSERT_OVERHEAD_START|SCHED_ADVANCED|LOW_LAT)=' "${c}" || true
+          done
+
+      - name: "Run arms: clobber {0,1} x latency {0,200us} x seeds {1,2}"
+        shell: bash
+        run: |
+          export ZEPHYR_BASE="${PWD}"
+          export BIN_SUFFIX="${{ matrix.build }}" LOAD="${{ matrix.load }}" HOST_INT="${{ matrix.host_int }}"
+          run=tests/bsim/bluetooth/ll/preempt_clobber/tests_scripts/preempt_clobber_run.sh
+          : > results.log
+          for lat in 0 200; do
+            for clobber in 0 1; do
+              for seed in 1 2; do
+                (CLOBBER=$clobber LAT_BURST_US=$lat SEED=$seed "$run" > "run_c${clobber}_b${lat}_s${seed}.log" 2>&1) &
+              done
+              wait
+            done
+          done
+          cat run_*.log | tee results.log
+          echo "===== summary"
+          grep RESULT results.log | sort | uniq -c
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preempt-clobber-logs-l${{ matrix.load }}-h${{ matrix.host_int }}-${{ matrix.build }}
+          path: |
+            results.log
+            run_*.log
+            /opt/bsim/results/
+            /opt/bsim/bin/pc_*.log
+          if-no-files-found: ignore
