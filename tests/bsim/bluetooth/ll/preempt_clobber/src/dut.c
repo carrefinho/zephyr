@@ -11,7 +11,7 @@
  * 1 ms and logs stale periods (preempt_req != preempt_ack with no preempt
  * ticker start pending, for longer than STALE_MS) and late prepares.
  *
- * Args (-argstest): clobber=0|1|2 (2 = preempt_stop_ack) load=0|1 lat_burst=us lat_period=us lat_isr=n
+ * Args (-argstest): clobber=0|1|2 (2 = preempt_stop_ack) load=0|1 yield=0|1 lat_burst=us lat_period=us lat_isr=n
  * Log lines parsed by the run script: CLOBBER, STALE_BEGIN, STALE_END, STATS,
  * FINAL.
  */
@@ -54,6 +54,7 @@ static volatile bool scanning;
 
 static uint32_t clobber;
 static uint32_t load;
+static uint32_t yield_en;
 
 /* LLL test hooks (subsys/bluetooth/controller/ll_sw/nordic/lll/lll.c). */
 extern volatile uint32_t lll_test_overhead_cnt;
@@ -282,6 +283,9 @@ static void test_args_parse(int argc, char *argv[])
 		if (sscanf(argv[i], "load=%u", &load) == 1) {
 			continue;
 		}
+		if (sscanf(argv[i], "yield=%u", &yield_en) == 1) {
+			continue;
+		}
 	}
 }
 
@@ -339,6 +343,47 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 	}
 }
 
+/* ---- split link yield (models a config's split_yield.c) ----------------
+ *
+ * yield=1: while the host is disconnected, move the split link to 28.75 ms,
+ * latency 7; switch back 150 ms after the host connects. Runs on the system
+ * work queue, queued from the same disconnected callback as the clobber.
+ */
+#define YIELD_INTERVAL_UNITS 23U
+#define YIELD_LATENCY        7U
+#define YIELD_SETTLE_MS      150
+
+static bool want_yield;
+
+static void yield_work_handler(struct k_work *work)
+{
+	struct bt_le_conn_param param = {
+		.interval_min = want_yield ? YIELD_INTERVAL_UNITS : SPLIT_INTERVAL_UNITS,
+		.interval_max = want_yield ? YIELD_INTERVAL_UNITS : SPLIT_INTERVAL_UNITS,
+		.latency = want_yield ? YIELD_LATENCY : CONN_LATENCY,
+		.timeout = CONN_TIMEOUT_UNITS,
+	};
+	int err;
+
+	if (!split_conn) {
+		return;
+	}
+	err = bt_conn_le_param_update(split_conn, &param);
+	printk("YIELD %s t_ms=%lld err=%d\n", want_yield ? "slow" : "fast", k_uptime_get(),
+	       err);
+}
+
+static K_WORK_DELAYABLE_DEFINE(yield_work, yield_work_handler);
+
+static void le_param_updated(struct bt_conn *conn, uint16_t interval, uint16_t latency,
+			     uint16_t timeout)
+{
+	if (conn == split_conn) {
+		printk("SPLIT_PARAMS t_ms=%lld interval=%u latency=%u\n", k_uptime_get(),
+		       interval, latency);
+	}
+}
+
 static void adv_work_handler(struct k_work *work)
 {
 	int err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad), NULL, 0);
@@ -367,6 +412,10 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	} else {
 		host_conn = bt_conn_ref(conn);
 		printk("DUT connected to host (peripheral link) t_ms=%lld\n", k_uptime_get());
+		if (yield_en) {
+			want_yield = false;
+			k_work_reschedule(&yield_work, K_MSEC(YIELD_SETTLE_MS));
+		}
 	}
 }
 
@@ -387,6 +436,10 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 		if (clobber) {
 			k_work_submit(&clobber_work);
 		}
+		if (yield_en) {
+			want_yield = true;
+			k_work_reschedule(&yield_work, K_NO_WAIT);
+		}
 	}
 }
 
@@ -401,6 +454,7 @@ static struct bt_conn_cb conn_callbacks = {
 	.connected = connected,
 	.disconnected = disconnected,
 	.recycled = recycled,
+	.le_param_updated = le_param_updated,
 };
 
 static void dut_main(void)
@@ -445,8 +499,8 @@ static void dut_main(void)
 
 	k_thread_create(&mon_thread, mon_stack, K_THREAD_STACK_SIZEOF(mon_stack),
 			monitor, NULL, NULL, NULL, K_PRIO_PREEMPT(1), 0, K_NO_WAIT);
-	printk("DUT config: clobber=%u load=%u lat_burst=%u lat_period=%u\n", clobber,
-	       load, lat_burst_us, lat_period_us);
+	printk("DUT config: clobber=%u load=%u yield=%u lat_burst=%u lat_period=%u\n",
+	       clobber, load, yield_en, lat_burst_us, lat_period_us);
 
 	if (lat_burst_us > 0) {
 		k_thread_create(&lat_thread, lat_stack, K_THREAD_STACK_SIZEOF(lat_stack),

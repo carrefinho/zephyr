@@ -7,8 +7,10 @@
 # Env:
 #   BIN_SUFFIX     prj_conf (count build) or prj_conf_overlay_assert_conf
 #   SEED           base random seed (default 1)
-#   CLOBBER        1 = zero preempt_req on each host disconnect, 0 = control
+#   CLOBBER        1 = zero preempt_req, 2 = zero preempt_stop_ack on each
+#                  host disconnect, 0 = control
 #   LOAD           1 = saturated links, 0 = typing-rate traffic
+#   YIELD          1 = slow the split link while the host is away (28.75 ms)
 #   CYCLE_MS       host link up-time per cycle (default 20000)
 #   GAP_MS         host down-time per cycle (default 1000)
 #   HOST_INT       host connection interval, 1.25 ms units (default 7)
@@ -28,6 +30,7 @@ bin_suffix="${BIN_SUFFIX:-prj_conf}"
 bin="./bs_${BOARD_TS}_tests_bsim_bluetooth_ll_preempt_clobber_${bin_suffix}"
 clobber="${CLOBBER:-0}"
 load="${LOAD:-0}"
+yield="${YIELD:-0}"
 cycle_ms="${CYCLE_MS:-20000}"
 gap_ms="${GAP_MS:-1000}"
 host_int="${HOST_INT:-7}"
@@ -35,9 +38,9 @@ lat_burst="${LAT_BURST_US:-0}"
 lat_period="${LAT_PERIOD_US:-3300}"
 # The DUT/host/split stop themselves at WAIT_TIME (300 s); give the phy a bit more.
 sim_us="${SIM_US:-302e6}"
-tag="c${clobber}_l${load}_h${host_int}_b${lat_burst}_s${seed}_${bin_suffix}"
+tag="c${clobber}_y${yield}_l${load}_h${host_int}_b${lat_burst}_s${seed}_${bin_suffix}"
 sid="pc_${tag}"
-params="clobber=${clobber} load=${load} host_int=${host_int} lat_burst=${lat_burst} seed=${seed} build=${bin_suffix}"
+params="clobber=${clobber} yield=${yield} load=${load} host_int=${host_int} lat_burst=${lat_burst} seed=${seed} build=${bin_suffix}"
 
 cd "${BSIM_OUT_PATH}/bin"
 
@@ -45,7 +48,7 @@ cd "${BSIM_OUT_PATH}/bin"
   -testid=split -rs=$((seed + 10)) > "${sid}_split.log" 2>&1 &
 "${bin}" -v=${verbosity_level} -s="${sid}" -d=1 -RealEncryption=0 \
   -testid=dut -rs=$((seed + 20)) \
-  -argstest clobber=${clobber} load=${load} lat_burst=${lat_burst} \
+  -argstest clobber=${clobber} load=${load} yield=${yield} lat_burst=${lat_burst} \
   lat_period=${lat_period} > "${sid}_dut.log" 2>&1 &
 "${bin}" -v=${verbosity_level} -s="${sid}" -d=2 -RealEncryption=0 -xo_drift=20e-6 \
   -testid=host -rs=$((seed + 30)) \
@@ -61,6 +64,8 @@ last_stats="$(grep -hE '(FINAL|STATS) t_ms=' "${sid}_dut.log" | tail -1)"
 echo "----- ${params}"
 echo "  dut:  ${last_stats}"
 echo "  host: $(grep -h 'HOST_FINAL' "${sid}_host.log" | tail -1)"
+echo "  split param updates applied: $(grep -c 'SPLIT_PARAMS' "${sid}_dut.log")," \
+     "first overhead: $(grep -h 'OVERHEAD t_ms' "${sid}_dut.log" | head -1 | sed 's/.*OVERHEAD //')"
 echo "  stale periods: $(grep -c 'STALE_BEGIN' "${sid}_dut.log")," \
      "longest: $(grep -h 'STALE_END' "${sid}_dut.log" | sed 's/.*dur_ms=//' | sort -n | tail -1)"
 if grep -qE 'ASSERTION FAIL' "${sid}"_*.log 2>/dev/null; then
