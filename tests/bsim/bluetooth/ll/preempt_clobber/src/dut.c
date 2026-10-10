@@ -11,7 +11,7 @@
  * 1 ms and logs stale periods (preempt_req != preempt_ack with no preempt
  * ticker start pending, for longer than STALE_MS) and late prepares.
  *
- * Args (-argstest): clobber=0|1 load=0|1 lat_burst=us lat_period=us lat_isr=n
+ * Args (-argstest): clobber=0|1|2 (2 = preempt_stop_ack) load=0|1 lat_burst=us lat_period=us lat_isr=n
  * Log lines parsed by the run script: CLOBBER, STALE_BEGIN, STALE_END, STATS,
  * FINAL.
  */
@@ -60,12 +60,14 @@ extern volatile uint32_t lll_test_overhead_cnt;
 extern volatile uint32_t lll_test_preempt_skip_cnt;
 extern volatile uint32_t lll_test_preempt_start_cnt;
 void lll_test_preempt_req_set(uint8_t val);
+void lll_test_preempt_stop_ack_set(uint8_t val);
+void lll_test_preempt_stop_state(uint8_t *stop_req, uint8_t *stop_ack);
 void lll_test_preempt_state(uint8_t *req, uint8_t *ack, uint8_t *start_req,
 			    uint8_t *start_ack);
 
 static uint32_t host_disconnects;
 static uint32_t clobbers;
-static uint32_t clobbers_effective; /* preempt_req was nonzero, so it changed */
+static uint32_t clobbers_effective; /* the target byte was nonzero, so it changed */
 
 /* ---- CPU-latency injector ------------------------------------------------
  *
@@ -164,16 +166,24 @@ static void lat_injector(void *p1, void *p2, void *p3)
 
 static void clobber_work_handler(struct k_work *work)
 {
-	uint8_t req, ack, sreq, sack;
+	uint8_t req, ack, sreq, sack, stop_req, stop_ack;
 
 	lll_test_preempt_state(&req, &ack, &sreq, &sack);
+	lll_test_preempt_stop_state(&stop_req, &stop_ack);
 	clobbers++;
-	if (req != 0U) {
+	if (((clobber == 2U) ? stop_ack : req) != 0U) {
 		clobbers_effective++;
 	}
-	printk("CLOBBER n=%u t_ms=%lld req=%u ack=%u start_req=%u start_ack=%u\n",
-	       clobbers, k_uptime_get(), req, ack, sreq, sack);
-	lll_test_preempt_req_set(0U);
+	printk("CLOBBER n=%u target=%s t_ms=%lld req=%u ack=%u start_req=%u start_ack=%u "
+	       "stop_req=%u stop_ack=%u\n",
+	       clobbers, (clobber == 2U) ? "stop_ack" : "req", k_uptime_get(), req, ack,
+	       sreq, sack, stop_req, stop_ack);
+	if (clobber == 2U) {
+		/* Coron's production layout: the write lands one byte later. */
+		lll_test_preempt_stop_ack_set(0U);
+	} else {
+		lll_test_preempt_req_set(0U);
+	}
 }
 
 static K_WORK_DEFINE(clobber_work, clobber_work_handler);

@@ -1057,6 +1057,17 @@ void lll_test_preempt_req_set(uint8_t val)
 	preempt_req = val;
 }
 
+void lll_test_preempt_stop_ack_set(uint8_t val)
+{
+	preempt_stop_ack = val;
+}
+
+void lll_test_preempt_stop_state(uint8_t *stop_req, uint8_t *stop_ack)
+{
+	*stop_req = preempt_stop_req;
+	*stop_ack = preempt_stop_ack;
+}
+
 void lll_test_preempt_state(uint8_t *req, uint8_t *ack, uint8_t *start_req,
 			    uint8_t *start_ack)
 {
