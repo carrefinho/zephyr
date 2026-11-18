@@ -177,6 +177,77 @@ ZTEST(subrate_central_loc, test_subrate_central_initiated)
 		      llcp_ctx_buffers_free());
 }
 
+/* Run one Central-initiated update with the event counter at 'event' and return
+ * the SubrateBaseEvent sent in the LL_SUBRATE_IND.
+ */
+static uint16_t central_ind_base_event(uint16_t event, uint16_t factor)
+{
+	struct pdu_data_llctrl_subrate_ind ind = exp_ind;
+	struct node_rx_subrate_change change = exp_ntf;
+	struct node_rx_pdu *ntf;
+	struct node_tx *tx;
+	uint16_t base_event;
+	uint8_t err;
+
+	ind.subrate_factor = factor;
+	change.subrate_factor = factor;
+	conn.lll.event_counter = event;
+
+	err = ull_cp_subrate_req(&conn, factor, factor, MAX_LATENCY, CONT_NUMBER, SUBRATE_TO);
+	zassert_equal(err, BT_HCI_ERR_SUCCESS, "err %u", err);
+
+	event_prepare(&conn);
+	lt_rx(LL_SUBRATE_IND, &conn, &tx, &ind);
+	lt_rx_q_is_empty(&conn);
+	base_event = sys_le16_to_cpu(
+		((struct pdu_data *)tx->pdu)->llctrl.subrate_ind.subrate_base_event);
+	event_tx_ack(&conn, tx);
+	event_done(&conn);
+	ull_cp_release_tx(&conn, tx);
+
+	ut_rx_node(NODE_SUBRATE_CHANGE, &ntf, &change);
+	ut_rx_q_is_empty();
+	release_ntf(ntf);
+
+	return base_event;
+}
+
+/*
+ * SubrateBaseEvent near a quarter boundary of the event counter (Core Spec
+ * 5.1.19): bits 15-14 must match connEventCount when the PDU is queued, and
+ * the value must still give the intended phase (event + 6, modulo the factor).
+ * Factor 5 does not divide 65536, so a wrong step back would change the phase.
+ */
+ZTEST(subrate_central_loc, test_subrate_central_base_event_wrap)
+{
+	const uint16_t events[] = {
+		0x3FF9U, 0x3FFAU, 0x3FFBU, 0x3FFEU, 0x3FFFU, 0x4000U,
+		0x7FFDU, 0xBFFCU, 0xFFF9U, 0xFFFAU, 0xFFFEU, 0xFFFFU, 0x0000U,
+	};
+	const uint16_t factor = 5U;
+
+	test_set_role(&conn, BT_HCI_ROLE_CENTRAL);
+	ull_cp_state_set(&conn, ULL_CP_CONNECTED);
+	conn.llcp.fex.features_peer |= BIT64(BT_LE_FEAT_BIT_CONN_SUBRATING_HOST_SUPP);
+
+	for (size_t i = 0; i < ARRAY_SIZE(events); i++) {
+		const uint16_t event = events[i];
+		const uint16_t base_event = central_ind_base_event(event, factor);
+		/* Distance back from the default placement, 6 events ahead */
+		const uint16_t back = (uint16_t)(event + 6U - base_event);
+
+		zassert_equal(base_event & 0xC000U, event & 0xC000U,
+			      "event 0x%04x: base 0x%04x in another quarter", event, base_event);
+		zassert_equal(back % factor, 0U, "event 0x%04x: base 0x%04x changes the phase",
+			      event, base_event);
+		zassert_true(back < 6U + factor, "event 0x%04x: base 0x%04x stepped too far",
+			     event, base_event);
+	}
+
+	zassert_equal(llcp_ctx_buffers_free(), test_ctx_buffers_cnt(), "Free CTX buffers %d",
+		      llcp_ctx_buffers_free());
+}
+
 /*
  * Peripheral-initiated Connection Subrate Request (Core Spec 5.1.20).
  * Host requests subrating; Peripheral sends LL_SUBRATE_REQ and applies the

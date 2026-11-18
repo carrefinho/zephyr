@@ -142,13 +142,25 @@ enum {
  * Shared helpers
  */
 
-/* Compute the new connSubrateBaseEvent (Central only). The base event is placed a
- * few connection events into the future so both devices converge on the same phase.
- * TODO(subrate-sched): apply the S[15:14] = E[15:14] wrap-handling rule (5.1.19).
+/* Compute the new connSubrateBaseEvent (Central only). Called when the
+ * LL_SUBRATE_IND is queued, since 5.1.19 requires SubrateBaseEvent bits 15-14
+ * to equal those of connEventCount at that point. That lets the Peripheral
+ * tell whether the PDU was meant for before or after a counter wrap.
+ *
+ * The base event is placed a few events ahead. If that crosses into the next
+ * quarter of the counter range, step back by whole subrate factors: any value
+ * congruent modulo the factor selects the same subrated events (4.5.1).
  */
-static uint16_t subrate_base_event_calc(struct ll_conn *conn)
+__maybe_unused static uint16_t subrate_base_event_calc(struct ll_conn *conn, uint16_t factor)
 {
-	return ull_conn_event_counter(conn) + SUBRATE_BASE_EVENT_DELTA;
+	const uint16_t event_counter = ull_conn_event_counter(conn);
+	uint16_t base_event = event_counter + SUBRATE_BASE_EVENT_DELTA;
+
+	while (((base_event ^ event_counter) & 0xC000U) != 0U) {
+		base_event -= factor;
+	}
+
+	return base_event;
 }
 
 /* Validate a received LL_SUBRATE_REQ against the Host-provided acceptable
@@ -210,7 +222,6 @@ __maybe_unused static bool subrate_req_negotiate(struct ll_conn *conn, struct pr
 	ctx->data.subrate.latency = latency;
 	ctx->data.subrate.continuation_number = cont;
 	ctx->data.subrate.timeout = timeout;
-	ctx->data.subrate.subrate_base_event = subrate_base_event_calc(conn);
 
 	return true;
 }
@@ -240,7 +251,6 @@ __maybe_unused static void subrate_ind_params_calc(struct ll_conn *conn, struct 
 	ctx->data.subrate.latency = latency;
 	ctx->data.subrate.continuation_number = cont;
 	/* timeout already in ctx from the Host request */
-	ctx->data.subrate.subrate_base_event = subrate_base_event_calc(conn);
 }
 
 /* Store the negotiated subrate parameters on the connection. The peripheral
@@ -260,6 +270,11 @@ static void subrate_apply(struct ll_conn *conn, struct proc_ctx *ctx)
 	 * value congruent mod factor selects the same set of subrated events, and
 	 * keeping it close to "now" simplifies the scheduler's next-event math.
 	 * (Mirrors NimBLE ble_ll_conn_subrate_set.)
+	 *
+	 * The signed 16-bit distance also covers the Peripheral's wrap rule in
+	 * 5.1.19: a SubrateBaseEvent with bits 15-14 = 0b11 received when the
+	 * counter's are 0b00 is taken as from before the wrap, which is the
+	 * same as adding (K x factor - 65536) as 4.5.1 requires.
 	 */
 	if (factor > 1U) {
 		int16_t event_diff = (int16_t)(ull_conn_event_counter(conn) - base_event);
@@ -320,6 +335,8 @@ static void lp_subrate_tx(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t op
 #endif /* CONFIG_BT_PERIPHERAL */
 #if defined(CONFIG_BT_CENTRAL)
 	case PDU_DATA_LLCTRL_TYPE_SUBRATE_IND:
+		ctx->data.subrate.subrate_base_event =
+			subrate_base_event_calc(conn, ctx->data.subrate.subrate_factor);
 		llcp_pdu_encode_subrate_ind(ctx, pdu);
 		/* New parameters take effect once this PDU is acknowledged */
 		ctx->node_ref.tx_ack = tx;
@@ -591,6 +608,8 @@ __maybe_unused static void rp_subrate_tx(struct ll_conn *conn, struct proc_ctx *
 	switch (opcode) {
 #if defined(CONFIG_BT_CENTRAL)
 	case PDU_DATA_LLCTRL_TYPE_SUBRATE_IND:
+		ctx->data.subrate.subrate_base_event =
+			subrate_base_event_calc(conn, ctx->data.subrate.subrate_factor);
 		llcp_pdu_encode_subrate_ind(ctx, pdu);
 		/* New parameters take effect once this PDU is acknowledged */
 		ctx->node_ref.tx_ack = tx;
